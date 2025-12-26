@@ -1,0 +1,35 @@
+# 1) 모든 걸 기본으로 무시
+*
+
+# 2) 디렉터리는 탐색 가능하게 (뒤의 ! 규칙들이 먹히도록)
+!*/
+
+# 3) 전역적으로 살릴 파일들
+!.gitignore
+!*.py
+!*.yaml
+!*.yml
+!*.json
+!*.txt
+!*.md
+!*.ipynb
+
+# 보고서/플롯 산출물 디렉터리는 git에서 제외
+report/
+
+.codex/
+.claude/
+
+# 4) 이름에 'data'/'DATA', 'output' 포함된 디렉터리는 전부 무시 (대소문자 폭넓게 커버)
+**/[dD][aA][tT][aA]*/
+**/[Oo][uU][tT][pP][uU][tT]*/
+**/[aA][rR][cC][hH][iI][vV][eE]*/
+
+# 7) Archive 디렉터리는 기본 ignore (필요 파일만 예외로 허용)
+!Archive/
+Archive/*
+
+# 8) 기타 
+.claude/
+AGENTS.md 
+.mcp.json
