@@ -30,3 +30,24 @@ with sync_playwright() as p:
     browser.close()
 PY
 ```
+
+## Playwright codegen (record actions)
+
+```bash
+conda run -n playwright playwright codegen https://epost.go.kr
+```
+
+## Playwright MCP (local install in .codex)
+
+If you want the MCP server installed locally (not just via npx), run:
+
+```bash
+rm -rf .codex/node_modules .codex/node_modules.bak .codex/node_modules.partial
+conda run -n playwright npm install --no-audit --no-fund
+```
+
+Then start the MCP server:
+
+```bash
+conda run -n playwright npx playwright-mcp
+```
