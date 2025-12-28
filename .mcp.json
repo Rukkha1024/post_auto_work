@@ -12,8 +12,7 @@
       }
     },
     "playwright": {
-      "command": "conda",
-      "args": ["run", "-n", "playwright", "npx", "-y", "playwright-mcp"]
+      "command": ".claude\\playwright-mcp.bat"
     }
   }
 }
