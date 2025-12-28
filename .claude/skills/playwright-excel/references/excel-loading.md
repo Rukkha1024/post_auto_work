@@ -1,4 +1,4 @@
-# Excel Loading (Polars then Pandas)
+# Excel Loading (Polars)
 
 ## config.yaml shape
 ```yaml
@@ -35,15 +35,6 @@ def load_config():
         return yaml.safe_load(fh), repo_root
 
 
-def read_excel_df(excel_path: Path, sheet_name: str):
-    try:
-        import polars as pl
-        return pl.read_excel(str(excel_path), sheet_name=sheet_name), "polars"
-    except Exception:
-        import pandas as pd
-        return pd.read_excel(excel_path, sheet_name=sheet_name), "pandas"
-
-
 def load_data_from_excel() -> dict:
     config, repo_root = load_config()
     target_subject = os.getenv("PLAYWRIGHT_TARGET_SUBJECT", config["target"]["subject"])
@@ -52,24 +43,15 @@ def load_data_from_excel() -> dict:
     sheet_name = config["excel"]["sheet_name"]
     columns = config["excel"]["columns"]
 
-    df, backend = read_excel_df(excel_path, sheet_name)
+    import polars as pl
 
-    if backend == "polars":
-        import polars as pl
-
-        filtered = df.filter(pl.col(columns["subject"]) == target_subject)
-        if filtered.height == 0:
-            raise ValueError(
-                f"No rows for subject '{target_subject}' in {excel_path} (sheet: {sheet_name})"
-            )
-        row = filtered.row(0, named=True)
-    else:
-        filtered = df[df[columns["subject"]] == target_subject]
-        if filtered.empty:
-            raise ValueError(
-                f"No rows for subject '{target_subject}' in {excel_path} (sheet: {sheet_name})"
-            )
-        row = filtered.iloc[0].to_dict()
+    df = pl.read_excel(str(excel_path), sheet_name=sheet_name)
+    filtered = df.filter(pl.col(columns["subject"]) == target_subject)
+    if filtered.height == 0:
+        raise ValueError(
+            f"No rows for subject '{target_subject}' in {excel_path} (sheet: {sheet_name})"
+        )
+    row = filtered.row(0, named=True)
 
     return {
         var_name: row[col_name]
@@ -79,6 +61,6 @@ def load_data_from_excel() -> dict:
 ```
 
 ## Notes
-- Use polars first; fall back to pandas if polars or its Excel engine fails.
+- Use polars only.
 - Use the first matching row only.
 - Raise a clear error when no matching subject is found.
