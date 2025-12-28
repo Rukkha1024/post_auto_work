@@ -1,0 +1,14 @@
+# config.yaml - Naver 자동화 설정
+excel:
+  path: "tests/통합 문서1.xlsx"
+  sheet_name: "하이"
+
+  # Excel 컬럼 매핑
+  columns:
+    subject: "subject"
+    username: "주소"
+    password: "착용날짜"
+
+# 타겟 사용자 (환경변수 NAVER_TEST_SUBJECT로 오버라이드 가능)
+target:
+  subject: "조민석"  # 기본값
