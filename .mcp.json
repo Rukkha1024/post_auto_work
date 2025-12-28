@@ -12,7 +12,8 @@
       }
     },
     "playwright": {
-      "command": ".claude\\playwright-mcp.bat"
+      "command": "cmd",
+      "args": ["/c", "npx", "@playwright/mcp@latest"]
     }
   }
 }
