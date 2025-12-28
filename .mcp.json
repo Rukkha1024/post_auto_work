@@ -1,12 +1,12 @@
 {
   "mcpServers": {
     "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@upstash/context7-mcp"]
     },
     "excel": {
-      "command": "npx",
-      "args": ["--yes", "@negokaz/excel-mcp-server"],
+      "command": "cmd",
+      "args": ["/c", "npx", "--yes", "@negokaz/excel-mcp-server"],
       "env": {
         "EXCEL_MCP_PAGING_CELLS_LIMIT": "4000"
       }
