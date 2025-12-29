@@ -79,6 +79,40 @@ def click_link_by_text(page, text: str, container_selector: str | None = None) -
     )
 
 
+def click_visible_element_by_text(page, selectors: list[str], text_tokens: list[str]) -> bool:
+    if not selectors:
+        return False
+    return page.evaluate(
+        """(payload) => {
+            const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+            const tokens = payload.text_tokens || [];
+            const matchesText = (el) => {
+                if (tokens.length === 0) return true;
+                const text = (el.textContent || el.value || '').trim();
+                return tokens.some(token => text.includes(token));
+            };
+            for (const selector of payload.selectors || []) {
+                const elements = Array.from(document.querySelectorAll(selector));
+                for (const el of elements) {
+                    if (el.disabled) continue;
+                    if (!isVisible(el)) continue;
+                    if (!matchesText(el)) continue;
+                    el.click();
+                    return true;
+                }
+            }
+            return false;
+        }""",
+        {"selectors": selectors, "text_tokens": text_tokens or []},
+    )
+
+
 def remove_modal_and_login(page, config: dict) -> dict:
     login_cfg = config["epost"]["login"]
     creds = config["epost"]["credentials"]
@@ -210,8 +244,15 @@ def open_address_popup(page, config: dict, timeout_ms: int):
 
 def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
     popup_cfg = config["epost"]["address_popup"]
-    page.locator('input[name="keyword"]').fill(popup_cfg["keyword"])
-    page.locator('button[type="button"]').first.click()
+    keyword_selector = popup_cfg["keyword_selector"]
+    page.locator(keyword_selector).fill(popup_cfg["keyword"])
+    clicked = click_visible_element_by_text(
+        page,
+        popup_cfg.get("search_button_selectors", []),
+        popup_cfg.get("search_button_text_contains", []),
+    )
+    if not clicked:
+        page.locator(keyword_selector).press("Enter")
     page.wait_for_timeout(timeout_ms)
 
     found = page.evaluate(

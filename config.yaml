@@ -57,7 +57,16 @@ epost:
   address_popup:
     trigger_onclick_contains: "newRePostNum"
     trigger_text_contains: "주소찾기"
+    keyword_selector: 'input[name="keyword"]'
     keyword: "향군로 74번길 26"
+    search_button_selectors:
+      - 'button[type="button"]'
+      - 'button[type="submit"]'
+      - 'input[type="button"]'
+    search_button_text_contains:
+      - "검색"
+      - "찾기"
+      - "주소검색"
     result_text_contains: "향군로74번길 26"
     building: "103"
     unit: "912"
