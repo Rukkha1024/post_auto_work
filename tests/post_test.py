@@ -1,274 +1,405 @@
 # -*- coding: utf-8 -*-
-import re
-from playwright.sync_api import Playwright, sync_playwright, expect
+from __future__ import annotations
+
 import time
+from pathlib import Path
+
+import yaml
+from playwright.sync_api import Playwright, sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_config() -> dict:
+    config_path = ROOT / "config.yaml"
+    with config_path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def ensure_progress_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def set_input_value(page, selector: str, value: str) -> bool:
+    if value is None:
+        return False
+    return page.evaluate(
+        """(sel, val) => {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            el.value = val;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }""",
+        selector,
+        value,
+    )
+
+
+def set_select_value(page, selector: str, value: str) -> bool:
+    if value is None:
+        return False
+    return page.evaluate(
+        """(sel, val) => {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            el.value = val;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }""",
+        selector,
+        value,
+    )
+
+
+def click_selector(page, selector: str) -> bool:
+    return page.evaluate(
+        """(sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            el.click();
+            return true;
+        }""",
+        selector,
+    )
+
+
+def click_link_by_text(page, text: str, container_selector: str | None = None) -> bool:
+    return page.evaluate(
+        """(payload) => {
+            const root = payload.container ? document.querySelector(payload.container) : document;
+            if (!root) return false;
+            const links = Array.from(root.querySelectorAll('a'));
+            const target = links.find(link => (link.textContent || '').includes(payload.text));
+            if (!target) return false;
+            target.click();
+            return true;
+        }""",
+        {"text": text, "container": container_selector},
+    )
+
+
+def remove_modal_and_login(page, config: dict) -> dict:
+    login_cfg = config["epost"]["login"]
+    creds = config["epost"]["credentials"]
+    payload = {
+        "modal_selector": login_cfg["modal_selector"],
+        "id_selectors": login_cfg["id_selectors"],
+        "pw_selectors": login_cfg["password_selectors"],
+        "username": creds["username"],
+        "password": creds["password"],
+    }
+    return page.evaluate(
+        """(payload) => {
+            const modal = document.querySelector(payload.modal_selector);
+            if (modal) {
+                modal.style.display = 'none';
+                modal.remove();
+            }
+
+            const selectFirst = (selectors) => {
+                for (const sel of selectors) {
+                    const el = document.querySelector(sel);
+                    if (el) return el;
+                }
+                return null;
+            };
+
+            const idInput = selectFirst(payload.id_selectors);
+            const pwInput = selectFirst(payload.pw_selectors);
+
+            if (idInput) {
+                idInput.value = payload.username;
+                idInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (pwInput) {
+                pwInput.value = payload.password;
+                pwInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            let submitted = false;
+            if (typeof checkVal === 'function') {
+                checkVal();
+                submitted = true;
+            } else {
+                const form = document.querySelector('#frmLogin');
+                if (form) {
+                    form.submit();
+                    submitted = true;
+                }
+            }
+
+            return {
+                id_found: !!idInput,
+                pw_found: !!pwInput,
+                submitted,
+            };
+        }""",
+        payload,
+    )
+
+
+def attach_dialog_handler(page, accept_contains: list[str]) -> None:
+    def _handler(dialog) -> None:
+        message = dialog.message
+        if any(token in message for token in accept_contains):
+            dialog.accept()
+        else:
+            dialog.dismiss()
+
+    page.on("dialog", _handler)
+
+
+def attach_popup_closer(context, url_contains: list[str], timeout_ms: int) -> None:
+    def _handler(popup) -> None:
+        try:
+            popup.wait_for_load_state(timeout=timeout_ms)
+        except PlaywrightTimeoutError:
+            pass
+        if any(token in popup.url for token in url_contains):
+            popup.close()
+
+    context.on("page", _handler)
+
+
+def toggle_address_popup_trigger(page, config: dict, click: bool) -> bool:
+    popup_cfg = config["epost"]["address_popup"]
+    payload = {
+        "click": click,
+        "onclick_contains": popup_cfg["trigger_onclick_contains"],
+        "text_contains": popup_cfg["trigger_text_contains"],
+    }
+    return page.evaluate(
+        """(payload) => {
+            const findLink = () => {
+                if (payload.onclick_contains) {
+                    const match = Array.from(document.querySelectorAll('a')).find(
+                        (link) => (link.getAttribute('onclick') || '').includes(payload.onclick_contains)
+                    );
+                    if (match) return match;
+                }
+                if (payload.text_contains) {
+                    const match = Array.from(document.querySelectorAll('a')).find(
+                        (link) => (link.textContent || '').includes(payload.text_contains)
+                    );
+                    if (match) return match;
+                }
+                return null;
+            };
+
+            const link = findLink();
+            if (!link) return false;
+            if (payload.click) link.click();
+            return true;
+        }""",
+        payload,
+    )
+
+
+def open_address_popup(page, config: dict, timeout_ms: int):
+    if not toggle_address_popup_trigger(page, config, False):
+        raise RuntimeError("주소찾기 링크를 찾지 못했습니다.")
+
+    try:
+        with page.expect_popup(timeout=timeout_ms) as popup_info:
+            toggle_address_popup_trigger(page, config, True)
+        return popup_info.value
+    except PlaywrightTimeoutError as exc:
+        raise RuntimeError("주소찾기 팝업이 열리지 않았습니다.") from exc
+
+
+def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
+    popup_cfg = config["epost"]["address_popup"]
+    page.locator('input[name="keyword"]').fill(popup_cfg["keyword"])
+    page.locator('button[type="button"]').first.click()
+    page.wait_for_timeout(timeout_ms)
+
+    found = page.evaluate(
+        """(text) => {
+            const links = Array.from(document.querySelectorAll('a'));
+            const target = links.find(link => (link.textContent || '').includes(text));
+            if (!target) return false;
+            target.click();
+            return true;
+        }""",
+        popup_cfg["result_text_contains"],
+    )
+    if not found:
+        raise RuntimeError("주소 검색 결과를 찾지 못했습니다.")
+
+    page.evaluate(
+        """(payload) => {
+            const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
+            for (const input of inputs) {
+                if (input.placeholder && input.placeholder.includes('동')) {
+                    input.value = payload.building;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                } else if (input.placeholder && input.placeholder.includes('호')) {
+                    input.value = payload.unit;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+        }""",
+        {"building": popup_cfg["building"], "unit": popup_cfg["unit"]},
+    )
+
+    clicked = page.evaluate(
+        """(text) => {
+            const links = Array.from(document.querySelectorAll('a'));
+            const target = links.find(link => (link.textContent || '').includes(text));
+            if (!target) return false;
+            target.click();
+            return true;
+        }""",
+        popup_cfg["submit_text_contains"],
+    )
+    if not clicked:
+        raise RuntimeError("주소 팝업 입력 버튼을 찾지 못했습니다.")
+
+
+def open_address_book_popup(page, timeout_ms: int):
+    try:
+        with page.expect_popup(timeout=timeout_ms) as popup_info:
+            clicked = click_link_by_text(page, "주소록 검색")
+        if not clicked:
+            raise RuntimeError("주소록 검색 링크를 찾지 못했습니다.")
+        return popup_info.value
+    except PlaywrightTimeoutError as exc:
+        raise RuntimeError("주소록 팝업이 열리지 않았습니다.") from exc
 
 
 def run(playwright: Playwright) -> None:
-    browser = playwright.chromium.launch(headless=False)
+    config = load_config()
+    epost_cfg = config["epost"]
+    timeouts = epost_cfg["timeouts_ms"]
+
+    progress_dir = ROOT / epost_cfg["paths"]["progress_dir"]
+    ensure_progress_dir(progress_dir)
+
+    browser = playwright.chromium.launch(
+        headless=epost_cfg["browser"]["headless"],
+        args=epost_cfg["browser"]["args"],
+    )
     context = browser.new_context()
+    attach_popup_closer(context, epost_cfg["popups"]["close_url_contains"], timeouts["popup"])
     page = context.new_page()
+    attach_dialog_handler(page, epost_cfg["login"]["accept_dialog_contains"])
 
-    # Navigate to login page
-    page.goto("https://www.epost.go.kr/usr/login/cafzc008k01.jsp?s_url=https://www.epost.go.kr", wait_until="domcontentloaded")
-
-    # Wait for page to stabilize
-    time.sleep(3)
-
-    # Use JavaScript to bypass loading modal and perform login
-    page.evaluate("""() => {
-        // 1. Remove the loading modal that blocks interactions
-        const modal = document.querySelector('#nppfs-loading-modal');
-        if (modal) {
-            modal.style.display = 'none';
-            modal.remove();
-        }
-
-        // 2. Fill login credentials directly
-        const idInput = document.querySelector('input[name="user_id"]') || document.querySelector('input[title="아이디"]');
-        const pwInput = document.querySelector('input[name="user_pwd"]') || document.querySelector('input[title="비밀번호"]');
-        if (idInput && pwInput) {
-            idInput.value = 'fg0015';
-            pwInput.value = 'dmlduf1308!';
-        }
-
-        // 3. Trigger login function
-        if (typeof checkVal === 'function') {
-            checkVal();
-        } else {
-            const form = document.querySelector('#frmLogin');
-            if (form) form.submit();
-        }
-    }""")
-
-    # Wait for login to process and handle popup
-    time.sleep(5)
-
-    # Handle payment service notification popup if it appears
     try:
-        # Wait for popup with timeout
-        page1 = page.wait_for_event('popup', timeout=10000)
-        time.sleep(2)
-        # Close the popup
-        page1.close()
-        print("Popup closed successfully")
-    except Exception as e:
-        print(f"No popup appeared or popup handling failed: {e}")
+        page.goto(epost_cfg["urls"]["login"], wait_until="domcontentloaded")
+        page.wait_for_timeout(timeouts["page_stabilize"])
 
-    # Navigate to 방문접수소포 예약 using direct URL instead of clicking
-    page.goto("https://www.epost.go.kr/usr/login/cafzc008k01.jsp?login=parcel18", wait_until="domcontentloaded")
-    time.sleep(4)
+        login_result = remove_modal_and_login(page, config)
+        if not login_result["id_found"] or not login_result["pw_found"]:
+            raise RuntimeError("로그인 입력창을 찾지 못했습니다.")
+        if not login_result["submitted"]:
+            raise RuntimeError("로그인 제출에 실패했습니다.")
 
-    # Check the checkbox using JavaScript to avoid encoding issues
-    page.evaluate("""() => {
-        const checkbox = document.querySelector('input[type="checkbox"]');
-        if (checkbox && !checkbox.checked) {
-            checkbox.click();
-        }
-    }""")
-    time.sleep(1)
-    # Click address search button using JavaScript
-    with page.expect_popup() as page2_info:
-        page.evaluate("""() => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const addressLink = links.find(link => link.textContent.includes('주소'));
-            if (addressLink) addressLink.click();
-        }""")
-    page2 = page2_info.value
-    time.sleep(1)
+        try:
+            page.wait_for_url("**/main.retrieveMainPage.comm", timeout=timeouts["login_wait"])
+        except PlaywrightTimeoutError as exc:
+            raise RuntimeError("로그인 완료 페이지로 이동하지 못했습니다.") from exc
 
-    # Fill address search
-    page2.locator('input[name="keyword"]').fill("향군로 74번길 26")
-    page2.locator('button[type="button"]').first.click()
-    time.sleep(2)
+        page.goto(epost_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
+        page.wait_for_timeout(timeouts["page_stabilize"])
 
-    # Click the address result
-    page2.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const addressResult = links.find(link => link.textContent.includes('향군로74번길 26'));
-        if (addressResult) addressResult.click();
-    }""")
-    time.sleep(1)
+        agree_text = epost_cfg["parcel"]["agree_checkbox_text"]
+        checked = page.evaluate(
+            """(text) => {
+                const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+                for (const checkbox of checkboxes) {
+                    const container = checkbox.closest('label') || checkbox.parentElement;
+                    const labelText = container ? container.textContent || '' : '';
+                    if (labelText.includes(text)) {
+                        if (!checkbox.checked) checkbox.click();
+                        return true;
+                    }
+                }
+                const fallback = document.querySelector('input[type="checkbox"]');
+                if (fallback && !fallback.checked) {
+                    fallback.click();
+                    return true;
+                }
+                return false;
+            }""",
+            agree_text,
+        )
+        if not checked:
+            raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
 
-    # Fill building number and unit
-    page2.evaluate("""() => {
-        const inputs = document.querySelectorAll('input[type="text"]');
-        for (let input of inputs) {
-            if (input.placeholder && input.placeholder.includes('동')) {
-                input.value = '103';
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-            } else if (input.placeholder && input.placeholder.includes('호')) {
-                input.value = '912';
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-        }
-    }""")
-    time.sleep(1)
+        if not set_select_value(page, 'select[name="wishReceiptTime"]', epost_cfg["parcel"]["wish_receipt_date"]):
+            raise RuntimeError("방문일 선택 필드를 찾지 못했습니다.")
+        if not set_select_value(page, 'select[name="wishReceiptTimeNm"]', epost_cfg["parcel"]["wish_receipt_time"]):
+            raise RuntimeError("방문시간 선택 필드를 찾지 못했습니다.")
+        if not set_select_value(page, 'select[name="pickupKeep"]', epost_cfg["parcel"]["pickup_keep_code"]):
+            raise RuntimeError("보관방법 선택 필드를 찾지 못했습니다.")
+        set_input_value(page, 'input[name="pickupKeepNm"]', epost_cfg["parcel"]["pickup_keep_note"])
 
-    # Submit address
-    page2.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const submitLink = links.find(link => link.textContent.includes('입력'));
-        if (submitLink) submitLink.click();
-    }""")
-    time.sleep(1)
-    page2.close()
-    time.sleep(1)
+        set_select_value(page, "#tmpWght1", epost_cfg["parcel"]["weight_code"])
+        set_select_value(page, "#tmpVol1", epost_cfg["parcel"]["volume_code"])
+        set_select_value(page, "#labProductCode", epost_cfg["parcel"]["product_code"])
 
-    # Click next button using JavaScript
-    page.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const nextLink = links.find(link => link.textContent.includes('다음'));
-        if (nextLink) nextLink.click();
-    }""")
-    time.sleep(2)
+        click_selector(page, "#pickupSaveBtn")
+        click_link_by_text(page, "다음", "#pickupInfoDiv")
 
-    # Fill pickup information
-    page.locator('select[name="pickupDate"]').select_option("2025-12-31")
-    page.locator("#pickupKeep").select_option("05")
-    page.locator('input[placeholder*="보관"]').fill("문 앞에 있어요")
-    time.sleep(1)
+        recipient_cfg = epost_cfg["recipient"]
+        if recipient_cfg["use_address_book"]:
+            page4 = open_address_book_popup(page, timeouts["popup"])
+            page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
+            click_link_by_text(page4, "확인")
+            page4.once("dialog", lambda dialog: dialog.dismiss())
+            click_link_by_text(page4, recipient_cfg["name"])
+            page4.close()
+        else:
+            set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"])
+            page2 = open_address_popup(page, config, timeouts["popup"])
+            fill_address_popup(page2, config, timeouts["action"])
+            page2.close()
+            set_input_value(page, 'input[name="reDetailAddr"]', recipient_cfg["detail_address"])
+            phone_parts = recipient_cfg["phone"]["mobile"]
+            set_input_value(page, "#reCell1", phone_parts[0])
+            set_input_value(page, "#reCell2", phone_parts[1])
+            set_input_value(page, "#reCell3", phone_parts[2])
 
-    # Click next in pickup info section
-    page.locator("#pickupInfoDiv a").first.click()
-    time.sleep(2)
-    # Skip the old recipient search popup
-    try:
-        with page.expect_popup(timeout=2000) as page3_info:
-            page.evaluate("""() => {
-                const links = Array.from(document.querySelectorAll('a'));
-                const link = links.find(link => link.textContent.includes('기존'));
-                if (link) link.click();
-            }""")
-        page3 = page3_info.value
-        page3.close()
-    except:
-        pass
+        click_selector(page, "#imgBtn")
+        click_selector(page, "#btnAddr")
+        click_link_by_text(page, "다음", "#recListNextDiv")
 
-    # Open address book search
-    with page.expect_popup() as page4_info:
-        page.evaluate("""() => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const link = links.find(link => link.textContent.includes('주소록'));
-            if (link) link.click();
-        }""")
-    page4 = page4_info.value
-    time.sleep(1)
+        card_cfg = epost_cfg["payment"]
+        card_numbers = card_cfg["card_numbers"]
+        set_input_value(page, "#creditNo1", card_numbers[0])
+        set_input_value(page, "#creditNo2", card_numbers[1])
+        set_input_value(page, "#creditNo3", card_numbers[2])
+        set_input_value(page, "#creditNo4", card_numbers[3])
 
-    # Select from address book
-    page4.locator('select').first.select_option("0")
-    page4.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const confirmLink = links.find(link => link.textContent.includes('확인'));
-        if (confirmLink) confirmLink.click();
-    }""")
-    time.sleep(1)
+        expiry = card_cfg["expiry"]
+        set_input_value(page, "#creditExp1", expiry[0])
+        set_input_value(page, "#creditExp2", expiry[1])
 
-    # Handle dialog and select recipient
-    page4.once("dialog", lambda dialog: dialog.dismiss())
-    page4.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const recipientLink = links.find(link => link.textContent.includes('육지연'));
-        if (recipientLink) recipientLink.click();
-    }""")
-    time.sleep(1)
-    page4.close()
+        pwd_digits = card_cfg["password_digits"]
+        set_input_value(page, "#creditPwd1", pwd_digits[0])
+        set_input_value(page, "#creditPwd2", pwd_digits[1])
+        set_input_value(page, "#creditBirth", card_cfg["birthdate"])
 
-    # Click next
-    page.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const nextLinks = links.filter(link => link.textContent.includes('다음'));
-        if (nextLinks[2]) nextLinks[2].click();
-    }""")
-    time.sleep(2)
+        page.once("dialog", lambda dialog: dialog.dismiss())
+        click_selector(page, "#certCreditInfo")
+        page.wait_for_timeout(timeouts["action"])
 
-    # Load item information
-    with page.expect_popup() as page5_info:
-        page.evaluate("""() => {
-            const elements = Array.from(document.querySelectorAll('*'));
-            const link = elements.find(el => el.textContent.includes('물품정보'));
-            if (link) link.click();
-        }""")
-    page5 = page5_info.value
-    time.sleep(1)
-
-    page5.once("dialog", lambda dialog: dialog.dismiss())
-    page5.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const link = links.find(link => link.textContent.trim() === '전자제품');
-        if (link) link.click();
-    }""")
-    time.sleep(1)
-    page5.close()
-
-    # Add to recipient list
-    page.once("dialog", lambda dialog: dialog.dismiss())
-    page.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const link = links.find(link => link.textContent.includes('목록에 추가'));
-        if (link) link.click();
-    }""")
-    time.sleep(1)
-
-    # Verify address
-    page.once("dialog", lambda dialog: dialog.dismiss())
-    page.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const link = links.find(link => link.textContent.includes('주소검증'));
-        if (link) link.click();
-    }""")
-    time.sleep(2)
-
-    # Click final next button
-    page.locator("#recListNextDiv a").first.click()
-    time.sleep(2)
-
-    # Fill payment card information using JavaScript
-    page.evaluate("""() => {
-        const inputs = document.querySelectorAll('input[type="text"]');
-        const cardInputs = [];
-
-        for (let input of inputs) {
-            const placeholder = input.placeholder || input.title || '';
-            if (placeholder.includes('카드') || placeholder.includes('유효') ||
-                placeholder.includes('비밀') || placeholder.includes('생년')) {
-                cardInputs.push(input);
-            }
-        }
-
-        // Fill card number (4 parts)
-        if (cardInputs[0]) cardInputs[0].value = '1234';
-        if (cardInputs[1]) cardInputs[1].value = '1234';
-        if (cardInputs[2]) cardInputs[2].value = '1234';
-        if (cardInputs[3]) cardInputs[3].value = '1234';
-
-        // Fill expiry date (month, year)
-        if (cardInputs[4]) cardInputs[4].value = '11';
-        if (cardInputs[5]) cardInputs[5].value = '11';
-
-        // Fill password (2 digits)
-        if (cardInputs[6]) cardInputs[6].value = '1';
-        if (cardInputs[7]) cardInputs[7].value = '1';
-
-        // Fill birth date
-        if (cardInputs[8]) cardInputs[8].value = '111111';
-    }""")
-    time.sleep(1)
-
-    # Verify payment card
-    page.once("dialog", lambda dialog: dialog.dismiss())
-    page.evaluate("""() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const link = links.find(link => link.textContent.includes('검증'));
-        if (link) link.click();
-    }""")
-    time.sleep(2)
-
-    print("Test completed successfully!")
-
-    # ---------------------
-    context.close()
-    browser.close()
+        print("Test completed successfully!")
+    except Exception:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        screenshot_name = f"{epost_cfg['paths']['failure_screenshot_prefix']}_{timestamp}.png"
+        screenshot_path = progress_dir / screenshot_name
+        try:
+            page.screenshot(path=str(screenshot_path), full_page=True)
+        except Exception:
+            pass
+        raise
+    finally:
+        context.close()
+        browser.close()
 
 
 with sync_playwright() as playwright:
