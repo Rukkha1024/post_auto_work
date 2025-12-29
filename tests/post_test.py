@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -113,15 +114,37 @@ def click_visible_element_by_text(page, selectors: list[str], text_tokens: list[
     )
 
 
-def wait_for_manual_step(page, step_cfg: dict, timeouts: dict, prompt_template: str) -> None:
+def wait_for_manual_step(
+    page, step_cfg: dict, timeouts: dict, prompt_template: str, input_mode: str
+) -> None:
     description = step_cfg.get("description") or step_cfg.get("name", "step")
-    print(prompt_template.format(step=description))
-    input()
     wait_timeout = timeouts.get("manual_step_wait", timeouts.get("action", 2000))
+    mode = (input_mode or "prompt_if_tty").strip().lower()
+    if mode in {"prompt_if_tty", "auto", "tty"}:
+        prompt_enabled = bool(sys.stdin) and sys.stdin.isatty()
+    elif mode in {"enter", "prompt", "always"}:
+        prompt_enabled = True
+    elif mode in {"skip", "none", "off"}:
+        prompt_enabled = False
+    else:
+        prompt_enabled = bool(sys.stdin) and sys.stdin.isatty()
+
+    if prompt_enabled:
+        print(prompt_template.format(step=description))
+        try:
+            input()
+        except EOFError:
+            print("stdin EOF; continue without Enter.")
+    else:
+        print(prompt_template.format(step=description))
+        print(f"Input prompt skipped (input_mode={input_mode}).")
+
     if step_cfg.get("wait_for_selector"):
         page.wait_for_selector(step_cfg["wait_for_selector"], timeout=wait_timeout)
     elif step_cfg.get("wait_for_url"):
         page.wait_for_url(step_cfg["wait_for_url"], timeout=wait_timeout)
+    else:
+        page.wait_for_timeout(wait_timeout)
 
 
 def maybe_wait_manual_step(
@@ -131,6 +154,7 @@ def maybe_wait_manual_step(
     manual_prompt: str | None,
     manual_steps: dict,
     timeouts: dict,
+    input_mode: str,
 ) -> bool:
     if not manual_enabled:
         return False
@@ -139,7 +163,7 @@ def maybe_wait_manual_step(
     step_cfg = manual_steps.get(step_name)
     if not step_cfg:
         raise RuntimeError(f"manual_steps.steps에서 '{step_name}' 설정을 찾지 못했습니다.")
-    wait_for_manual_step(page, step_cfg, timeouts, manual_prompt)
+    wait_for_manual_step(page, step_cfg, timeouts, manual_prompt, input_mode)
     return True
 
 
@@ -386,6 +410,7 @@ def run(playwright: Playwright) -> None:
     manual_cfg = process_cfg.get("manual_steps", {})
     manual_enabled = bool(manual_cfg.get("enabled", False))
     manual_prompt = manual_cfg.get("prompt_template")
+    manual_input_mode = manual_cfg.get("input_mode", "prompt_if_tty")
     manual_steps = {
         step["name"]: step for step in manual_cfg.get("steps", []) if step.get("name")
     }
@@ -464,6 +489,7 @@ def run(playwright: Playwright) -> None:
             manual_prompt,
             manual_steps,
             timeouts,
+            manual_input_mode,
         ):
             click_link_by_text(page, "다음", "#pickupInfoDiv")
 
@@ -498,6 +524,7 @@ def run(playwright: Playwright) -> None:
             manual_prompt,
             manual_steps,
             timeouts,
+            manual_input_mode,
         ):
             click_link_by_text(page, "다음", "#recListNextDiv")
 

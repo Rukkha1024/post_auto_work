@@ -113,6 +113,7 @@ epost:
     # 수동 단계 진행 모드
     manual_steps:
       enabled: true
+      input_mode: "prompt_if_tty"
       prompt_template: "브라우저에서 '{step}' 버튼을 클릭한 뒤, 여기서 Enter를 눌러 다음 단계로 진행하세요."
       steps:
         - name: "pickup_info_next"
