@@ -257,15 +257,41 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
         raise RuntimeError("주소 팝업 입력 버튼을 찾지 못했습니다.")
 
 
-def open_address_book_popup(page, timeout_ms: int):
+def open_address_book_popup(page, config: dict, timeout_ms: int):
+    address_book_cfg = config["epost"]["address_book"]
     try:
         with page.expect_popup(timeout=timeout_ms) as popup_info:
-            clicked = click_link_by_text(page, "주소록 검색")
+            clicked = click_link_by_text(page, address_book_cfg["search_text"])
         if not clicked:
             raise RuntimeError("주소록 검색 링크를 찾지 못했습니다.")
         return popup_info.value
     except PlaywrightTimeoutError as exc:
         raise RuntimeError("주소록 팝업이 열리지 않았습니다.") from exc
+
+
+def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
+    if not empty_tokens:
+        return False
+    return page.evaluate(
+        """(tokens) => {
+            const bodyText = document.body ? (document.body.innerText || '') : '';
+            return tokens.some(token => bodyText.includes(token));
+        }""",
+        empty_tokens,
+    )
+
+
+def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
+    recipient_cfg = config["epost"]["recipient"]
+    set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"])
+    page2 = open_address_popup(page, config, timeouts["popup"])
+    fill_address_popup(page2, config, timeouts["action"])
+    page2.close()
+    set_input_value(page, 'input[name="reDetailAddr"]', recipient_cfg["detail_address"])
+    phone_parts = recipient_cfg["phone"]["mobile"]
+    set_input_value(page, "#reCell1", phone_parts[0])
+    set_input_value(page, "#reCell2", phone_parts[1])
+    set_input_value(page, "#reCell3", phone_parts[2])
 
 
 def run(playwright: Playwright) -> None:
@@ -343,24 +369,26 @@ def run(playwright: Playwright) -> None:
         click_link_by_text(page, "다음", "#pickupInfoDiv")
 
         recipient_cfg = epost_cfg["recipient"]
+        manual_entry_required = not recipient_cfg["use_address_book"]
         if recipient_cfg["use_address_book"]:
-            page4 = open_address_book_popup(page, timeouts["popup"])
+            address_book_cfg = epost_cfg["address_book"]
+            page4 = open_address_book_popup(page, config, timeouts["popup"])
             page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
-            page4.get_by_text("확인").first.click()
+            page4.get_by_text(address_book_cfg["confirm_text"]).first.click()
             page4.wait_for_load_state("domcontentloaded")
             page4.once("dialog", lambda dialog: dialog.dismiss())
-            page4.get_by_text(recipient_cfg["name"]).first.click()
-            page4.close()
-        else:
-            set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"])
-            page2 = open_address_popup(page, config, timeouts["popup"])
-            fill_address_popup(page2, config, timeouts["action"])
-            page2.close()
-            set_input_value(page, 'input[name="reDetailAddr"]', recipient_cfg["detail_address"])
-            phone_parts = recipient_cfg["phone"]["mobile"]
-            set_input_value(page, "#reCell1", phone_parts[0])
-            set_input_value(page, "#reCell2", phone_parts[1])
-            set_input_value(page, "#reCell3", phone_parts[2])
+            if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
+                manual_entry_required = True
+                page4.close()
+            else:
+                name_locator = page4.get_by_text(recipient_cfg["name"])
+                if name_locator.count() == 0:
+                    manual_entry_required = True
+                else:
+                    name_locator.first.click()
+                page4.close()
+        if manual_entry_required:
+            fill_manual_recipient(page, config, timeouts)
 
         click_selector(page, "#imgBtn")
         click_selector(page, "#btnAddr")

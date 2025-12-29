@@ -63,6 +63,13 @@ epost:
     unit: "912"
     submit_text_contains: "입력"
 
+  address_book:
+    search_text: "주소록 검색"
+    confirm_text: "확인"
+    empty_text_contains:
+      - "주소록이 없습니다"
+      - "등록된 주소록이 없습니다"
+
   recipient:
     use_address_book: true
     name: "육지연"
