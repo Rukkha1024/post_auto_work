@@ -25,16 +25,15 @@ def set_input_value(page, selector: str, value: str) -> bool:
     if value is None:
         return False
     return page.evaluate(
-        """(sel, val) => {
-            const el = document.querySelector(sel);
+        """(payload) => {
+            const el = document.querySelector(payload.selector);
             if (!el) return false;
-            el.value = val;
+            el.value = payload.value;
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
             return true;
         }""",
-        selector,
-        value,
+        {"selector": selector, "value": value},
     )
 
 
@@ -42,15 +41,14 @@ def set_select_value(page, selector: str, value: str) -> bool:
     if value is None:
         return False
     return page.evaluate(
-        """(sel, val) => {
-            const el = document.querySelector(sel);
+        """(payload) => {
+            const el = document.querySelector(payload.selector);
             if (!el) return false;
-            el.value = val;
+            el.value = payload.value;
             el.dispatchEvent(new Event('change', { bubbles: true }));
             return true;
         }""",
-        selector,
-        value,
+        {"selector": selector, "value": value},
     )
 
 
