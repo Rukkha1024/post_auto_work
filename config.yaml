@@ -2,20 +2,24 @@
 epost:
   # 기본 스크립트 설정 (공통): 브라우저/경로/타임아웃/로그인/팝업 등
   script:
+    # URL 주소 설정
     urls:
       login: "https://www.epost.go.kr/usr/login/cafzc008k01.jsp?s_url=https://www.epost.go.kr"
       parcel_reservation: "https://parcel.epost.go.kr/general.RetrieveGeneralNewGubunLogin.parcel"
 
+    # 로그인 자격증명
     credentials:
       username: "fg0015"
       password: "dmlduf1308!"
 
+    # 브라우저 옵션 (headless: false = 창 보임, true = 백그라운드 실행)
     browser:
-      headless: false
+      headless: true
       args:
         - "--disable-notifications"
         - "--disable-features=BlockInsecurePrivateNetworkRequests"
 
+    # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
       page_stabilize: 3000
       login_wait: 15000
@@ -23,10 +27,12 @@ epost:
       action: 2000
       manual_step_wait: 120000
 
+    # 파일/폴더 경로
     paths:
       progress_dir: "progress"
       failure_screenshot_prefix: "post_test_failure"
 
+    # 로그인 셀렉터 및 대화상자 처리
     login:
       modal_selector: "#nppfs-loading-modal"
       id_selectors:
@@ -43,12 +49,14 @@ epost:
         - "현재 접속"
         - "기존 접속"
 
+    # 팝업 창 처리
     popups:
       close_url_contains:
         - "main.retrieveMainPopupDetail.comm"
 
   # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
+    # 택배 신청 정보
     parcel:
       agree_checkbox_text: "우편금지물품"
       wish_receipt_date: "2025-12-31"
@@ -59,6 +67,7 @@ epost:
       volume_code: "80"
       product_code: "023"
 
+    # 주소 검색 팝업 설정
     address_popup:
       trigger_onclick_contains: "newRePostNum"
       trigger_text_contains: "주소찾기"
@@ -77,6 +86,7 @@ epost:
       unit: "912"
       submit_text_contains: "입력"
 
+    # 주소록 관련
     address_book:
       search_text: "주소록 검색"
       confirm_text: "확인"
@@ -84,6 +94,7 @@ epost:
         - "주소록이 없습니다"
         - "등록된 주소록이 없습니다"
 
+    # 수취인 정보
     recipient:
       use_address_book: true
       name: "육지연"
@@ -92,12 +103,14 @@ epost:
         mobile: ["010", "0000", "0000"]
       detail_address: "103동 912호"
 
+    # 결제 카드 정보
     payment:
       card_numbers: ["1234", "1234", "1234", "1234"]
       expiry: ["11", "11"]
       password_digits: ["1", "1"]
       birthdate: "111111"
 
+    # 수동 단계 진행 모드
     manual_steps:
       enabled: true
       prompt_template: "브라우저에서 '{step}' 버튼을 클릭한 뒤, 여기서 Enter를 눌러 다음 단계로 진행하세요."
