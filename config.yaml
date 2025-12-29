@@ -19,6 +19,7 @@ epost:
     login_wait: 15000
     popup: 10000
     action: 2000
+    manual_step_wait: 120000
 
   paths:
     progress_dir: "progress"
@@ -92,3 +93,14 @@ epost:
     expiry: ["11", "11"]
     password_digits: ["1", "1"]
     birthdate: "111111"
+
+  manual_steps:
+    enabled: true
+    prompt_template: "브라우저에서 '{step}' 버튼을 클릭한 뒤, 여기서 Enter를 눌러 다음 단계로 진행하세요."
+    steps:
+      - name: "pickup_info_next"
+        description: "다음(픽업 정보)"
+        wait_for_selector: 'input[name="receiverName"]'
+      - name: "recipient_next"
+        description: "다음(받는 사람)"
+        wait_for_selector: "#creditNo1"

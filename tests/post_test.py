@@ -113,6 +113,36 @@ def click_visible_element_by_text(page, selectors: list[str], text_tokens: list[
     )
 
 
+def wait_for_manual_step(page, step_cfg: dict, timeouts: dict, prompt_template: str) -> None:
+    description = step_cfg.get("description") or step_cfg.get("name", "step")
+    print(prompt_template.format(step=description))
+    input()
+    wait_timeout = timeouts.get("manual_step_wait", timeouts.get("action", 2000))
+    if step_cfg.get("wait_for_selector"):
+        page.wait_for_selector(step_cfg["wait_for_selector"], timeout=wait_timeout)
+    elif step_cfg.get("wait_for_url"):
+        page.wait_for_url(step_cfg["wait_for_url"], timeout=wait_timeout)
+
+
+def maybe_wait_manual_step(
+    page,
+    step_name: str,
+    manual_enabled: bool,
+    manual_prompt: str | None,
+    manual_steps: dict,
+    timeouts: dict,
+) -> bool:
+    if not manual_enabled:
+        return False
+    if not manual_prompt:
+        raise RuntimeError("manual_steps.prompt_template 설정이 필요합니다.")
+    step_cfg = manual_steps.get(step_name)
+    if not step_cfg:
+        raise RuntimeError(f"manual_steps.steps에서 '{step_name}' 설정을 찾지 못했습니다.")
+    wait_for_manual_step(page, step_cfg, timeouts, manual_prompt)
+    return True
+
+
 def remove_modal_and_login(page, config: dict) -> dict:
     login_cfg = config["epost"]["login"]
     creds = config["epost"]["credentials"]
@@ -339,6 +369,12 @@ def run(playwright: Playwright) -> None:
     config = load_config()
     epost_cfg = config["epost"]
     timeouts = epost_cfg["timeouts_ms"]
+    manual_cfg = epost_cfg.get("manual_steps", {})
+    manual_enabled = bool(manual_cfg.get("enabled", False))
+    manual_prompt = manual_cfg.get("prompt_template")
+    manual_steps = {
+        step["name"]: step for step in manual_cfg.get("steps", []) if step.get("name")
+    }
 
     progress_dir = ROOT / epost_cfg["paths"]["progress_dir"]
     ensure_progress_dir(progress_dir)
@@ -407,7 +443,15 @@ def run(playwright: Playwright) -> None:
         set_select_value(page, "#labProductCode", epost_cfg["parcel"]["product_code"])
 
         click_selector(page, "#pickupSaveBtn")
-        click_link_by_text(page, "다음", "#pickupInfoDiv")
+        if not maybe_wait_manual_step(
+            page,
+            "pickup_info_next",
+            manual_enabled,
+            manual_prompt,
+            manual_steps,
+            timeouts,
+        ):
+            click_link_by_text(page, "다음", "#pickupInfoDiv")
 
         recipient_cfg = epost_cfg["recipient"]
         manual_entry_required = not recipient_cfg["use_address_book"]
@@ -433,7 +477,15 @@ def run(playwright: Playwright) -> None:
 
         click_selector(page, "#imgBtn")
         click_selector(page, "#btnAddr")
-        click_link_by_text(page, "다음", "#recListNextDiv")
+        if not maybe_wait_manual_step(
+            page,
+            "recipient_next",
+            manual_enabled,
+            manual_prompt,
+            manual_steps,
+            timeouts,
+        ):
+            click_link_by_text(page, "다음", "#recListNextDiv")
 
         card_cfg = epost_cfg["payment"]
         card_numbers = card_cfg["card_numbers"]
