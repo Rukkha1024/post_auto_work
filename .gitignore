@@ -21,9 +21,9 @@ report/
 # 4) 이름에 'data'/'DATA', 'output' 포함된 디렉터리는 전부 무시 (대소문자 폭넓게 커버)
 **/[dD][aA][tT][aA]*/
 **/[Oo][uU][tT][pP][uU][tT]*/
-**/[aA][rR][cC][hH][iI][vV][eE]*/
 
 # 7) Archive 디렉터리는 기본 ignore (필요 파일만 예외로 허용)
 !Archive/
 Archive/*
+!Archive/*.md
 
