@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -114,31 +115,32 @@ def click_visible_element_by_text(page, selectors: list[str], text_tokens: list[
     )
 
 
-def wait_for_manual_step(
-    page, step_cfg: dict, timeouts: dict, prompt_template: str, input_mode: str
-) -> None:
-    description = step_cfg.get("description") or step_cfg.get("name", "step")
-    wait_timeout = timeouts.get("manual_step_wait", timeouts.get("action", 2000))
+def stdin_is_tty() -> bool:
+    try:
+        return os.isatty(sys.stdin.fileno())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def manual_prompt_enabled(input_mode: str) -> bool:
     mode = (input_mode or "prompt_if_tty").strip().lower()
     if mode in {"prompt_if_tty", "auto", "tty"}:
-        prompt_enabled = bool(sys.stdin) and sys.stdin.isatty()
-    elif mode in {"enter", "prompt", "always"}:
-        prompt_enabled = True
-    elif mode in {"skip", "none", "off"}:
-        prompt_enabled = False
-    else:
-        prompt_enabled = bool(sys.stdin) and sys.stdin.isatty()
+        return stdin_is_tty()
+    if mode in {"prompt_always", "always", "enter", "prompt"}:
+        return True
+    if mode in {"skip", "none", "off"}:
+        return False
+    return stdin_is_tty()
 
-    if prompt_enabled:
-        print(prompt_template.format(step=description))
-        try:
-            input()
-        except EOFError:
-            print("stdin EOF; continue without Enter.")
-    else:
-        print(prompt_template.format(step=description))
-        print(f"Input prompt skipped (input_mode={input_mode}).")
 
+def wait_for_manual_step(page, step_cfg: dict, timeouts: dict, prompt_template: str) -> None:
+    description = step_cfg.get("description") or step_cfg.get("name", "step")
+    print(prompt_template.format(step=description))
+    try:
+        input()
+    except EOFError:
+        print("stdin EOF; continue without Enter.")
+    wait_timeout = timeouts.get("manual_step_wait", timeouts.get("action", 2000))
     if step_cfg.get("wait_for_selector"):
         page.wait_for_selector(step_cfg["wait_for_selector"], timeout=wait_timeout)
     elif step_cfg.get("wait_for_url"):
@@ -163,7 +165,10 @@ def maybe_wait_manual_step(
     step_cfg = manual_steps.get(step_name)
     if not step_cfg:
         raise RuntimeError(f"manual_steps.steps에서 '{step_name}' 설정을 찾지 못했습니다.")
-    wait_for_manual_step(page, step_cfg, timeouts, manual_prompt, input_mode)
+    if not manual_prompt_enabled(input_mode):
+        print(f"Manual step '{step_name}' skipped (input_mode={input_mode}).")
+        return False
+    wait_for_manual_step(page, step_cfg, timeouts, manual_prompt)
     return True
 
 
