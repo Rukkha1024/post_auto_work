@@ -17,8 +17,6 @@
 # 보고서/플롯 산출물 디렉터리는 git에서 제외
 report/
 
-.codex/
-.claude/
 
 # 4) 이름에 'data'/'DATA', 'output' 포함된 디렉터리는 전부 무시 (대소문자 폭넓게 커버)
 **/[dD][aA][tT][aA]*/
@@ -29,7 +27,3 @@ report/
 !Archive/
 Archive/*
 
-# 8) 기타 
-.claude/
-AGENTS.md 
-.mcp.json
