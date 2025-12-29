@@ -146,6 +146,7 @@ def maybe_wait_manual_step(
 def remove_modal_and_login(page, config: dict) -> dict:
     epost_cfg = config["epost"]
     script_cfg = epost_cfg["script"]
+    # 로그인 단계에서만 사용하는 설정(Working process 이전)
     login_cfg = script_cfg["login"]
     creds = script_cfg["credentials"]
     payload = {
@@ -380,6 +381,7 @@ def run(playwright: Playwright) -> None:
     epost_cfg = config["epost"]
     script_cfg = epost_cfg["script"]
     process_cfg = epost_cfg["working_process"]
+    # script_cfg: 기본 스크립트 설정 / process_cfg: 로그인 이후 작업(working process)
     timeouts = script_cfg["timeouts_ms"]
     manual_cfg = process_cfg.get("manual_steps", {})
     manual_enabled = bool(manual_cfg.get("enabled", False))

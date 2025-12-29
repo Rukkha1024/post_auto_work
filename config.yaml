@@ -1,5 +1,6 @@
 # config.yaml - ePost automation settings
 epost:
+  # 기본 스크립트 설정 (공통): 브라우저/경로/타임아웃/로그인/팝업 등
   script:
     urls:
       login: "https://www.epost.go.kr/usr/login/cafzc008k01.jsp?s_url=https://www.epost.go.kr"
@@ -46,6 +47,7 @@ epost:
       close_url_contains:
         - "main.retrieveMainPopupDetail.comm"
 
+  # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
     parcel:
       agree_checkbox_text: "우편금지물품"
