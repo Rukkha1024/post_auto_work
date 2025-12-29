@@ -1,106 +1,108 @@
 # config.yaml - ePost automation settings
 epost:
-  urls:
-    login: "https://www.epost.go.kr/usr/login/cafzc008k01.jsp?s_url=https://www.epost.go.kr"
-    parcel_reservation: "https://parcel.epost.go.kr/general.RetrieveGeneralNewGubunLogin.parcel"
+  script:
+    urls:
+      login: "https://www.epost.go.kr/usr/login/cafzc008k01.jsp?s_url=https://www.epost.go.kr"
+      parcel_reservation: "https://parcel.epost.go.kr/general.RetrieveGeneralNewGubunLogin.parcel"
 
-  credentials:
-    username: "fg0015"
-    password: "dmlduf1308!"
+    credentials:
+      username: "fg0015"
+      password: "dmlduf1308!"
 
-  browser:
-    headless: false
-    args:
-      - "--disable-notifications"
-      - "--disable-features=BlockInsecurePrivateNetworkRequests"
+    browser:
+      headless: false
+      args:
+        - "--disable-notifications"
+        - "--disable-features=BlockInsecurePrivateNetworkRequests"
 
-  timeouts_ms:
-    page_stabilize: 3000
-    login_wait: 15000
-    popup: 10000
-    action: 2000
-    manual_step_wait: 120000
+    timeouts_ms:
+      page_stabilize: 3000
+      login_wait: 15000
+      popup: 10000
+      action: 2000
+      manual_step_wait: 120000
 
-  paths:
-    progress_dir: "progress"
-    failure_screenshot_prefix: "post_test_failure"
+    paths:
+      progress_dir: "progress"
+      failure_screenshot_prefix: "post_test_failure"
 
-  login:
-    modal_selector: "#nppfs-loading-modal"
-    id_selectors:
-      - "input[name='id']"
-      - "#id"
-      - "input[title*='아이디']"
-      - "input[name='user_id']"
-    password_selectors:
-      - "input[name='passwd']"
-      - "#passwd"
-      - "input[title*='비밀번호']"
-      - "input[name='user_pwd']"
-    accept_dialog_contains:
-      - "현재 접속"
-      - "기존 접속"
+    login:
+      modal_selector: "#nppfs-loading-modal"
+      id_selectors:
+        - "input[name='id']"
+        - "#id"
+        - "input[title*='아이디']"
+        - "input[name='user_id']"
+      password_selectors:
+        - "input[name='passwd']"
+        - "#passwd"
+        - "input[title*='비밀번호']"
+        - "input[name='user_pwd']"
+      accept_dialog_contains:
+        - "현재 접속"
+        - "기존 접속"
 
-  popups:
-    close_url_contains:
-      - "main.retrieveMainPopupDetail.comm"
+    popups:
+      close_url_contains:
+        - "main.retrieveMainPopupDetail.comm"
 
-  parcel:
-    agree_checkbox_text: "우편금지물품"
-    wish_receipt_date: "2025-12-31"
-    wish_receipt_time: "09:00~11:00"
-    pickup_keep_code: "05"
-    pickup_keep_note: "문 앞에 있어요"
-    weight_code: "11"
-    volume_code: "80"
-    product_code: "023"
+  working_process:
+    parcel:
+      agree_checkbox_text: "우편금지물품"
+      wish_receipt_date: "2025-12-31"
+      wish_receipt_time: "09:00~11:00"
+      pickup_keep_code: "05"
+      pickup_keep_note: "문 앞에 있어요"
+      weight_code: "11"
+      volume_code: "80"
+      product_code: "023"
 
-  address_popup:
-    trigger_onclick_contains: "newRePostNum"
-    trigger_text_contains: "주소찾기"
-    keyword_selector: 'input[name="keyword"]'
-    keyword: "향군로 74번길 26"
-    search_button_selectors:
-      - 'button[type="button"]'
-      - 'button[type="submit"]'
-      - 'input[type="button"]'
-    search_button_text_contains:
-      - "검색"
-      - "찾기"
-      - "주소검색"
-    result_text_contains: "향군로74번길 26"
-    building: "103"
-    unit: "912"
-    submit_text_contains: "입력"
+    address_popup:
+      trigger_onclick_contains: "newRePostNum"
+      trigger_text_contains: "주소찾기"
+      keyword_selector: 'input[name="keyword"]'
+      keyword: "향군로 74번길 26"
+      search_button_selectors:
+        - 'button[type="button"]'
+        - 'button[type="submit"]'
+        - 'input[type="button"]'
+      search_button_text_contains:
+        - "검색"
+        - "찾기"
+        - "주소검색"
+      result_text_contains: "향군로74번길 26"
+      building: "103"
+      unit: "912"
+      submit_text_contains: "입력"
 
-  address_book:
-    search_text: "주소록 검색"
-    confirm_text: "확인"
-    empty_text_contains:
-      - "주소록이 없습니다"
-      - "등록된 주소록이 없습니다"
+    address_book:
+      search_text: "주소록 검색"
+      confirm_text: "확인"
+      empty_text_contains:
+        - "주소록이 없습니다"
+        - "등록된 주소록이 없습니다"
 
-  recipient:
-    use_address_book: true
-    name: "육지연"
-    address_book_group_value: "0"
-    phone:
-      mobile: ["010", "0000", "0000"]
-    detail_address: "103동 912호"
+    recipient:
+      use_address_book: true
+      name: "육지연"
+      address_book_group_value: "0"
+      phone:
+        mobile: ["010", "0000", "0000"]
+      detail_address: "103동 912호"
 
-  payment:
-    card_numbers: ["1234", "1234", "1234", "1234"]
-    expiry: ["11", "11"]
-    password_digits: ["1", "1"]
-    birthdate: "111111"
+    payment:
+      card_numbers: ["1234", "1234", "1234", "1234"]
+      expiry: ["11", "11"]
+      password_digits: ["1", "1"]
+      birthdate: "111111"
 
-  manual_steps:
-    enabled: true
-    prompt_template: "브라우저에서 '{step}' 버튼을 클릭한 뒤, 여기서 Enter를 눌러 다음 단계로 진행하세요."
-    steps:
-      - name: "pickup_info_next"
-        description: "다음(픽업 정보)"
-        wait_for_selector: 'input[name="receiverName"]'
-      - name: "recipient_next"
-        description: "다음(받는 사람)"
-        wait_for_selector: "#creditNo1"
+    manual_steps:
+      enabled: true
+      prompt_template: "브라우저에서 '{step}' 버튼을 클릭한 뒤, 여기서 Enter를 눌러 다음 단계로 진행하세요."
+      steps:
+        - name: "pickup_info_next"
+          description: "다음(픽업 정보)"
+          wait_for_selector: 'input[name="receiverName"]'
+        - name: "recipient_next"
+          description: "다음(받는 사람)"
+          wait_for_selector: "#creditNo1"

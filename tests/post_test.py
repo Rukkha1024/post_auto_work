@@ -144,8 +144,10 @@ def maybe_wait_manual_step(
 
 
 def remove_modal_and_login(page, config: dict) -> dict:
-    login_cfg = config["epost"]["login"]
-    creds = config["epost"]["credentials"]
+    epost_cfg = config["epost"]
+    script_cfg = epost_cfg["script"]
+    login_cfg = script_cfg["login"]
+    creds = script_cfg["credentials"]
     payload = {
         "modal_selector": login_cfg["modal_selector"],
         "id_selectors": login_cfg["id_selectors"],
@@ -227,7 +229,9 @@ def attach_popup_closer(context, url_contains: list[str], timeout_ms: int) -> No
 
 
 def toggle_address_popup_trigger(page, config: dict, click: bool) -> bool:
-    popup_cfg = config["epost"]["address_popup"]
+    epost_cfg = config["epost"]
+    process_cfg = epost_cfg["working_process"]
+    popup_cfg = process_cfg["address_popup"]
     payload = {
         "click": click,
         "onclick_contains": popup_cfg["trigger_onclick_contains"],
@@ -273,7 +277,9 @@ def open_address_popup(page, config: dict, timeout_ms: int):
 
 
 def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
-    popup_cfg = config["epost"]["address_popup"]
+    epost_cfg = config["epost"]
+    process_cfg = epost_cfg["working_process"]
+    popup_cfg = process_cfg["address_popup"]
     keyword_selector = popup_cfg["keyword_selector"]
     page.locator(keyword_selector).fill(popup_cfg["keyword"])
     clicked = click_visible_element_by_text(
@@ -329,7 +335,9 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
 
 
 def open_address_book_popup(page, config: dict, timeout_ms: int):
-    address_book_cfg = config["epost"]["address_book"]
+    epost_cfg = config["epost"]
+    process_cfg = epost_cfg["working_process"]
+    address_book_cfg = process_cfg["address_book"]
     try:
         with page.expect_popup(timeout=timeout_ms) as popup_info:
             clicked = click_link_by_text(page, address_book_cfg["search_text"])
@@ -353,7 +361,9 @@ def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
 
 
 def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
-    recipient_cfg = config["epost"]["recipient"]
+    epost_cfg = config["epost"]
+    process_cfg = epost_cfg["working_process"]
+    recipient_cfg = process_cfg["recipient"]
     set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"])
     page2 = open_address_popup(page, config, timeouts["popup"])
     fill_address_popup(page2, config, timeouts["action"])
@@ -368,28 +378,30 @@ def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
 def run(playwright: Playwright) -> None:
     config = load_config()
     epost_cfg = config["epost"]
-    timeouts = epost_cfg["timeouts_ms"]
-    manual_cfg = epost_cfg.get("manual_steps", {})
+    script_cfg = epost_cfg["script"]
+    process_cfg = epost_cfg["working_process"]
+    timeouts = script_cfg["timeouts_ms"]
+    manual_cfg = process_cfg.get("manual_steps", {})
     manual_enabled = bool(manual_cfg.get("enabled", False))
     manual_prompt = manual_cfg.get("prompt_template")
     manual_steps = {
         step["name"]: step for step in manual_cfg.get("steps", []) if step.get("name")
     }
 
-    progress_dir = ROOT / epost_cfg["paths"]["progress_dir"]
+    progress_dir = ROOT / script_cfg["paths"]["progress_dir"]
     ensure_progress_dir(progress_dir)
 
     browser = playwright.chromium.launch(
-        headless=epost_cfg["browser"]["headless"],
-        args=epost_cfg["browser"]["args"],
+        headless=script_cfg["browser"]["headless"],
+        args=script_cfg["browser"]["args"],
     )
     context = browser.new_context()
-    attach_popup_closer(context, epost_cfg["popups"]["close_url_contains"], timeouts["popup"])
+    attach_popup_closer(context, script_cfg["popups"]["close_url_contains"], timeouts["popup"])
     page = context.new_page()
-    attach_dialog_handler(page, epost_cfg["login"]["accept_dialog_contains"])
+    attach_dialog_handler(page, script_cfg["login"]["accept_dialog_contains"])
 
     try:
-        page.goto(epost_cfg["urls"]["login"], wait_until="domcontentloaded")
+        page.goto(script_cfg["urls"]["login"], wait_until="domcontentloaded")
         page.wait_for_timeout(timeouts["page_stabilize"])
 
         login_result = remove_modal_and_login(page, config)
@@ -403,10 +415,10 @@ def run(playwright: Playwright) -> None:
         except PlaywrightTimeoutError as exc:
             raise RuntimeError("로그인 완료 페이지로 이동하지 못했습니다.") from exc
 
-        page.goto(epost_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
+        page.goto(script_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
         page.wait_for_timeout(timeouts["page_stabilize"])
 
-        agree_text = epost_cfg["parcel"]["agree_checkbox_text"]
+        agree_text = process_cfg["parcel"]["agree_checkbox_text"]
         checked = page.evaluate(
             """(text) => {
                 const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
@@ -430,17 +442,17 @@ def run(playwright: Playwright) -> None:
         if not checked:
             raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
 
-        if not set_select_value(page, 'select[name="wishReceiptTime"]', epost_cfg["parcel"]["wish_receipt_date"]):
+        if not set_select_value(page, 'select[name="wishReceiptTime"]', process_cfg["parcel"]["wish_receipt_date"]):
             raise RuntimeError("방문일 선택 필드를 찾지 못했습니다.")
-        if not set_select_value(page, 'select[name="wishReceiptTimeNm"]', epost_cfg["parcel"]["wish_receipt_time"]):
+        if not set_select_value(page, 'select[name="wishReceiptTimeNm"]', process_cfg["parcel"]["wish_receipt_time"]):
             raise RuntimeError("방문시간 선택 필드를 찾지 못했습니다.")
-        if not set_select_value(page, 'select[name="pickupKeep"]', epost_cfg["parcel"]["pickup_keep_code"]):
+        if not set_select_value(page, 'select[name="pickupKeep"]', process_cfg["parcel"]["pickup_keep_code"]):
             raise RuntimeError("보관방법 선택 필드를 찾지 못했습니다.")
-        set_input_value(page, 'input[name="pickupKeepNm"]', epost_cfg["parcel"]["pickup_keep_note"])
+        set_input_value(page, 'input[name="pickupKeepNm"]', process_cfg["parcel"]["pickup_keep_note"])
 
-        set_select_value(page, "#tmpWght1", epost_cfg["parcel"]["weight_code"])
-        set_select_value(page, "#tmpVol1", epost_cfg["parcel"]["volume_code"])
-        set_select_value(page, "#labProductCode", epost_cfg["parcel"]["product_code"])
+        set_select_value(page, "#tmpWght1", process_cfg["parcel"]["weight_code"])
+        set_select_value(page, "#tmpVol1", process_cfg["parcel"]["volume_code"])
+        set_select_value(page, "#labProductCode", process_cfg["parcel"]["product_code"])
 
         click_selector(page, "#pickupSaveBtn")
         if not maybe_wait_manual_step(
@@ -453,10 +465,10 @@ def run(playwright: Playwright) -> None:
         ):
             click_link_by_text(page, "다음", "#pickupInfoDiv")
 
-        recipient_cfg = epost_cfg["recipient"]
+        recipient_cfg = process_cfg["recipient"]
         manual_entry_required = not recipient_cfg["use_address_book"]
         if recipient_cfg["use_address_book"]:
-            address_book_cfg = epost_cfg["address_book"]
+            address_book_cfg = process_cfg["address_book"]
             page4 = open_address_book_popup(page, config, timeouts["popup"])
             page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
             page4.get_by_text(address_book_cfg["confirm_text"]).first.click()
@@ -487,7 +499,7 @@ def run(playwright: Playwright) -> None:
         ):
             click_link_by_text(page, "다음", "#recListNextDiv")
 
-        card_cfg = epost_cfg["payment"]
+        card_cfg = process_cfg["payment"]
         card_numbers = card_cfg["card_numbers"]
         set_input_value(page, "#creditNo1", card_numbers[0])
         set_input_value(page, "#creditNo2", card_numbers[1])
@@ -509,7 +521,7 @@ def run(playwright: Playwright) -> None:
         print("Test completed successfully!")
     except Exception:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        screenshot_name = f"{epost_cfg['paths']['failure_screenshot_prefix']}_{timestamp}.png"
+        screenshot_name = f"{script_cfg['paths']['failure_screenshot_prefix']}_{timestamp}.png"
         screenshot_path = progress_dir / screenshot_name
         try:
             page.screenshot(path=str(screenshot_path), full_page=True)
