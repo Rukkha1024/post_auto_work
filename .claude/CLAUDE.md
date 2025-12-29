@@ -9,7 +9,7 @@ Always follow this procedure when performing tasks:
 
 ---
 ## Environment rules
-- Use the existing conda env: `playwright` (WSL2).
+- Use the existing conda env: `playwright`.
 - Always run Python/pip as: `conda run -n playwright python` / `conda run -n playwright pip`.
 - **Do not** create or activate any `venv` or `.venv` or run `uv venv`.
 - If a package is missing, prefer:
@@ -34,3 +34,8 @@ The primary goal is to centralize shared values across multiple scripts. This en
 5.  **Tunable Analysis Parameters:** Specify parameters that researchers might adjust (e.g., filter cutoffs, normalization methods).
 6.  **Shared Texts:** Centralize common log messages or report headers (e.g., `STAGE03_SUMMARY_HEADER`).
 
+----
+- User interest in web automation. 
+- use playwright mcp when run the script. 
+- if it does not working, capture the screenshot and fix the problem. you can also read 'progress/' folder's file for finding a solution. 
+- You can change the automation script to a different language if you prefer. The only reason it is currently written in Python is because it needs to interact with Excel files for web automation purpose. 
