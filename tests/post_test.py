@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import os
-import sys
 import time
 from pathlib import Path
 
@@ -113,63 +111,6 @@ def click_visible_element_by_text(page, selectors: list[str], text_tokens: list[
         }""",
         {"selectors": selectors, "text_tokens": text_tokens or []},
     )
-
-
-def stdin_is_tty() -> bool:
-    try:
-        return os.isatty(sys.stdin.fileno())
-    except (AttributeError, OSError, ValueError):
-        return False
-
-
-def manual_prompt_enabled(input_mode: str) -> bool:
-    mode = (input_mode or "prompt_if_tty").strip().lower()
-    if mode in {"prompt_if_tty", "auto", "tty"}:
-        return stdin_is_tty()
-    if mode in {"prompt_always", "always", "enter", "prompt"}:
-        return True
-    if mode in {"skip", "none", "off"}:
-        return False
-    return stdin_is_tty()
-
-
-def wait_for_manual_step(page, step_cfg: dict, timeouts: dict, prompt_template: str) -> None:
-    description = step_cfg.get("description") or step_cfg.get("name", "step")
-    print(prompt_template.format(step=description))
-    try:
-        input()
-    except EOFError:
-        print("stdin EOF; continue without Enter.")
-    wait_timeout = timeouts.get("manual_step_wait", timeouts.get("action", 2000))
-    if step_cfg.get("wait_for_selector"):
-        page.wait_for_selector(step_cfg["wait_for_selector"], timeout=wait_timeout)
-    elif step_cfg.get("wait_for_url"):
-        page.wait_for_url(step_cfg["wait_for_url"], timeout=wait_timeout)
-    else:
-        page.wait_for_timeout(wait_timeout)
-
-
-def maybe_wait_manual_step(
-    page,
-    step_name: str,
-    manual_enabled: bool,
-    manual_prompt: str | None,
-    manual_steps: dict,
-    timeouts: dict,
-    input_mode: str,
-) -> bool:
-    if not manual_enabled:
-        return False
-    if not manual_prompt:
-        raise RuntimeError("manual_steps.prompt_template 설정이 필요합니다.")
-    step_cfg = manual_steps.get(step_name)
-    if not step_cfg:
-        raise RuntimeError(f"manual_steps.steps에서 '{step_name}' 설정을 찾지 못했습니다.")
-    if not manual_prompt_enabled(input_mode):
-        print(f"Manual step '{step_name}' skipped (input_mode={input_mode}).")
-        return False
-    wait_for_manual_step(page, step_cfg, timeouts, manual_prompt)
-    return True
 
 
 def remove_modal_and_login(page, config: dict) -> dict:
@@ -412,14 +353,6 @@ def run(playwright: Playwright) -> None:
     process_cfg = epost_cfg["working_process"]
     # script_cfg: 기본 스크립트 설정 / process_cfg: 로그인 이후 작업(working process)
     timeouts = script_cfg["timeouts_ms"]
-    manual_cfg = process_cfg.get("manual_steps", {})
-    manual_enabled = bool(manual_cfg.get("enabled", False))
-    manual_prompt = manual_cfg.get("prompt_template")
-    manual_input_mode = manual_cfg.get("input_mode", "prompt_if_tty")
-    manual_steps = {
-        step["name"]: step for step in manual_cfg.get("steps", []) if step.get("name")
-    }
-
     progress_dir = ROOT / script_cfg["paths"]["progress_dir"]
     ensure_progress_dir(progress_dir)
 
@@ -487,16 +420,7 @@ def run(playwright: Playwright) -> None:
         set_select_value(page, "#labProductCode", process_cfg["parcel"]["product_code"])
 
         click_selector(page, "#pickupSaveBtn")
-        if not maybe_wait_manual_step(
-            page,
-            "pickup_info_next",
-            manual_enabled,
-            manual_prompt,
-            manual_steps,
-            timeouts,
-            manual_input_mode,
-        ):
-            click_link_by_text(page, "다음", "#pickupInfoDiv")
+        click_link_by_text(page, "다음", "#pickupInfoDiv")
 
         recipient_cfg = process_cfg["recipient"]
         manual_entry_required = not recipient_cfg["use_address_book"]
@@ -522,16 +446,7 @@ def run(playwright: Playwright) -> None:
 
         click_selector(page, "#imgBtn")
         click_selector(page, "#btnAddr")
-        if not maybe_wait_manual_step(
-            page,
-            "recipient_next",
-            manual_enabled,
-            manual_prompt,
-            manual_steps,
-            timeouts,
-            manual_input_mode,
-        ):
-            click_link_by_text(page, "다음", "#recListNextDiv")
+        click_link_by_text(page, "다음", "#recListNextDiv")
 
         card_cfg = process_cfg["payment"]
         card_numbers = card_cfg["card_numbers"]
