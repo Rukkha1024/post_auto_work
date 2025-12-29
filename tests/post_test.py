@@ -346,9 +346,10 @@ def run(playwright: Playwright) -> None:
         if recipient_cfg["use_address_book"]:
             page4 = open_address_book_popup(page, timeouts["popup"])
             page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
-            click_link_by_text(page4, "확인")
+            page4.get_by_text("확인").first.click()
+            page4.wait_for_load_state("domcontentloaded")
             page4.once("dialog", lambda dialog: dialog.dismiss())
-            click_link_by_text(page4, recipient_cfg["name"])
+            page4.get_by_text(recipient_cfg["name"]).first.click()
             page4.close()
         else:
             set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"])
