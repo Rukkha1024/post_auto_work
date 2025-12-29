@@ -451,7 +451,6 @@ def run(playwright: Playwright) -> None:
         set_input_value(page, "#creditPwd2", pwd_digits[1])
         set_input_value(page, "#creditBirth", card_cfg["birthdate"])
 
-        page.once("dialog", lambda dialog: dialog.dismiss())
         click_selector(page, "#certCreditInfo")
         page.wait_for_timeout(timeouts["action"])
 
