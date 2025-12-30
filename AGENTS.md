@@ -12,9 +12,7 @@ Always follow this procedure when performing tasks:
 - Use the existing conda env: `playwright`.
 - Always run Python/pip as: `conda run -n playwright python` / `conda run -n playwright pip`.
 - **Do not** create or activate any `venv` or `.venv` or run `uv venv`.
-- If a package is missing, prefer:
-  1) `mamba/conda install -n playwright <pkg>` (if available)
-  2) otherwise `conda run -n playwright pip install <pkg>`
+- If a package is missing, prefer: `conda run -n playwright pip install <pkg>`
 - Before running Python, verify the interpreter path with:
   `conda run -n playwright python -c "import sys; print(sys.executable)"`
 
@@ -26,16 +24,9 @@ Always follow this procedure when performing tasks:
 ### **Core Principle: Centralized Control**
 The primary goal is to centralize shared values across multiple scripts. This ensures consistency and minimizes code modifications when parameters change.
 
-### **Items to Include in Config Files:**
-1.  **Paths and Directories:** Define paths to data, logs, and outputs (e.g., `RAW_DATA_DIR`, `OUTPUT_DIR`).
-2.  **File Identification Patterns:** Store regex or fixed strings for parsing filenames (e.g., `VELOCITY_PATTERN`, `TRIAL_PATTERNS`).
-3.  **Data Structure Definitions:** List column names for data extraction or processing (e.g., `FORCEPLATE_COLUMNS`, `METADATA_COLS`).
-4.  **Fixed Processing Constants:** Define constants derived from the experimental setup (e.g., `FRAME_RATIO`, `FORCEPLATE_DATA_START`).
-5.  **Tunable Analysis Parameters:** Specify parameters that researchers might adjust (e.g., filter cutoffs, normalization methods).
-6.  **Shared Texts:** Centralize common log messages or report headers (e.g., `STAGE03_SUMMARY_HEADER`).
-
 ----
 - User interest in web automation. 
 - use playwright mcp when run the script. 
 - if it does not working, capture the screenshot and fix the problem. you can also read 'progress/' folder's file for finding a solution. 
 - You can change the automation script to a different language if you prefer. The only reason it is currently written in Python is because it needs to interact with Excel files for web automation purpose. 
+- "Archive\work_flow.md" file is the reference of the web automation flow.
