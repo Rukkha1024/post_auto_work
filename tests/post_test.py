@@ -85,6 +85,40 @@ def set_select_value(page, selector: str, value: str, timeout_ms: int | None = N
     return updated
 
 
+def set_input_by_label_tokens(page, label_tokens: list[str], value: str, timeout_ms: int | None = None) -> bool:
+    if value is None or not label_tokens:
+        return False
+    updated = page.evaluate(
+        """(payload) => {
+            const tokens = payload.tokens || [];
+            if (!tokens.length) return false;
+            const labels = Array.from(document.querySelectorAll('label'));
+            const label = labels.find(el => tokens.some(token => (el.textContent || '').includes(token)));
+            if (!label) return false;
+
+            const forId = label.getAttribute('for');
+            let field = forId ? document.getElementById(forId) : null;
+            if (!field) {
+                field = label.querySelector('input, textarea');
+            }
+            if (!field) {
+                const scope = label.closest('tr, li, div');
+                if (scope) field = scope.querySelector('input, textarea');
+            }
+            if (!field) return false;
+
+            field.value = payload.value;
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }""",
+        {"tokens": label_tokens, "value": value},
+    )
+    if updated:
+        step_delay(page, timeout_ms)
+    return updated
+
+
 def click_selector(page, selector: str, timeout_ms: int | None = None) -> bool:
     clicked = page.evaluate(
         """(sel) => {
@@ -120,6 +154,51 @@ def click_link_by_text(
     return clicked
 
 
+def click_link_by_text_index(
+    page,
+    text: str,
+    index: int = 0,
+    container_selector: str | None = None,
+    timeout_ms: int | None = None,
+) -> bool:
+    clicked = page.evaluate(
+        """(payload) => {
+            const root = payload.container ? document.querySelector(payload.container) : document;
+            if (!root) return false;
+            const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+            const candidates = Array.from(root.querySelectorAll('a, button, [role="button"], [role="link"]'));
+            const matches = candidates.filter((el) => {
+                const text = (el.textContent || '').trim();
+                const aria = (el.getAttribute('aria-label') || '').trim();
+                const title = (el.getAttribute('title') || '').trim();
+                const imgAlt = (el.querySelector('img[alt]')?.getAttribute('alt') || '').trim();
+                return (
+                    text.includes(payload.text)
+                    || aria.includes(payload.text)
+                    || title.includes(payload.text)
+                    || imgAlt.includes(payload.text)
+                );
+            });
+            const visibleMatches = matches.filter(isVisible);
+            const targetList = visibleMatches.length ? visibleMatches : matches;
+            const target = targetList[payload.index];
+            if (!target) return false;
+            target.click();
+            return true;
+        }""",
+        {"text": text, "index": index, "container": container_selector},
+    )
+    if clicked:
+        step_delay(page, timeout_ms)
+    return clicked
+
+
 def click_visible_element_by_text(
     page, selectors: list[str], text_tokens: list[str], timeout_ms: int | None = None
 ) -> bool:
@@ -138,7 +217,12 @@ def click_visible_element_by_text(
             const matchesText = (el) => {
                 if (tokens.length === 0) return true;
                 const text = (el.textContent || el.value || '').trim();
-                return tokens.some(token => text.includes(token));
+                const aria = (el.getAttribute('aria-label') || '').trim();
+                const title = (el.getAttribute('title') || '').trim();
+                const imgAlt = (el.querySelector('img[alt]')?.getAttribute('alt') || '').trim();
+                return tokens.some(
+                    token => text.includes(token) || aria.includes(token) || title.includes(token) || imgAlt.includes(token)
+                );
             };
             for (const selector of payload.selectors || []) {
                 const elements = Array.from(document.querySelectorAll(selector));
@@ -157,6 +241,14 @@ def click_visible_element_by_text(
     if clicked:
         step_delay(page, timeout_ms)
     return clicked
+
+
+def click_next_button(page, config: dict, timeout_ms: int | None = None) -> None:
+    process_cfg = config["epost"]["working_process"]
+    next_cfg = process_cfg["next_button"]
+    clicked = click_visible_element_by_text(page, next_cfg["selectors"], next_cfg["text_contains"], timeout_ms)
+    if not clicked:
+        raise RuntimeError("다음 버튼을 찾지 못했습니다.")
 
 
 def remove_modal_and_login(page, config: dict, timeout_ms: int | None = None) -> dict:
@@ -247,6 +339,21 @@ def attach_popup_closer(context, url_contains: list[str], timeout_ms: int) -> No
     context.on("page", _handler)
 
 
+def navigate_to_parcel_reservation(page, config: dict, timeout_ms: int | None = None) -> None:
+    process_cfg = config["epost"]["working_process"]
+    nav_cfg = process_cfg["navigation"]
+    for step_cfg in nav_cfg["menu_steps"]:
+        clicked = click_link_by_text_index(
+            page,
+            step_cfg["text"],
+            step_cfg.get("index", 0),
+            step_cfg.get("container_selector"),
+            timeout_ms,
+        )
+        if not clicked:
+            raise RuntimeError(f"메뉴 링크를 찾지 못했습니다: {step_cfg['text']}")
+
+
 def toggle_address_popup_trigger(page, config: dict, click: bool, timeout_ms: int | None = None) -> bool:
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
@@ -258,17 +365,31 @@ def toggle_address_popup_trigger(page, config: dict, click: bool, timeout_ms: in
     }
     clicked = page.evaluate(
         """(payload) => {
+            const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+            const pickMatch = (matches) => {
+                if (!matches.length) return null;
+                const visible = matches.find(isVisible);
+                return visible || matches[0];
+            };
             const findLink = () => {
                 if (payload.onclick_contains) {
-                    const match = Array.from(document.querySelectorAll('a')).find(
+                    const matches = Array.from(document.querySelectorAll('a')).filter(
                         (link) => (link.getAttribute('onclick') || '').includes(payload.onclick_contains)
                     );
+                    const match = pickMatch(matches);
                     if (match) return match;
                 }
                 if (payload.text_contains) {
-                    const match = Array.from(document.querySelectorAll('a')).find(
+                    const matches = Array.from(document.querySelectorAll('a')).filter(
                         (link) => (link.textContent || '').includes(payload.text_contains)
                     );
+                    const match = pickMatch(matches);
                     if (match) return match;
                 }
                 return null;
@@ -409,6 +530,21 @@ def select_item_in_popup(page, item_text: str, timeout_ms: int | None = None) ->
         pass
 
 
+def fill_delivery_note(page, config: dict, timeout_ms: int | None = None) -> None:
+    process_cfg = config["epost"]["working_process"]
+    item_info_cfg = process_cfg["item_info"]
+    note = item_info_cfg.get("delivery_note")
+    if not note:
+        return
+    selectors = item_info_cfg.get("delivery_note_selectors", [])
+    for selector in selectors:
+        if set_input_value(page, selector, note, timeout_ms):
+            return
+    if set_input_by_label_tokens(page, item_info_cfg.get("delivery_note_label_contains", []), note, timeout_ms):
+        return
+    raise RuntimeError("배송시 특이사항 입력 필드를 찾지 못했습니다.")
+
+
 def add_to_recipient_list(page, config: dict, timeout_ms: int | None = None) -> None:
     process_cfg = config["epost"]["working_process"]
     recipient_list_cfg = process_cfg["recipient_list"]
@@ -434,6 +570,27 @@ def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
             return tokens.some(token => bodyText.includes(token));
         }""",
         empty_tokens,
+    )
+
+
+def fill_sender_section(page, config: dict, timeouts: dict) -> None:
+    process_cfg = config["epost"]["working_process"]
+    sender_cfg = process_cfg["sender"]
+    page2 = open_address_popup(page, config, timeouts["action"])
+    fill_address_popup(page2, config, timeouts["action"])
+    step_delay(page2, timeouts["action"])
+    page2.close()
+    set_input_value(
+        page,
+        sender_cfg["phone_selectors"]["middle"],
+        sender_cfg["phone"]["middle"],
+        timeouts["action"],
+    )
+    set_input_value(
+        page,
+        sender_cfg["phone_selectors"]["last"],
+        sender_cfg["phone"]["last"],
+        timeouts["action"],
     )
 
 
@@ -491,7 +648,7 @@ def run(playwright: Playwright) -> None:
             raise RuntimeError("로그인 완료 페이지로 이동하지 못했습니다.") from exc
         step_delay(page, timeouts["action"])
 
-        page.goto(script_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
+        navigate_to_parcel_reservation(page, config, timeouts["action"])
         page.wait_for_timeout(timeouts["page_stabilize"])
 
         agree_text = process_cfg["parcel"]["agree_checkbox_text"]
@@ -519,6 +676,9 @@ def run(playwright: Playwright) -> None:
             step_delay(page, timeouts["action"])
         if not checked:
             raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
+
+        fill_sender_section(page, config, timeouts)
+        click_next_button(page, config, timeouts["action"])
 
         if not set_select_value(
             page,
@@ -550,66 +710,50 @@ def run(playwright: Playwright) -> None:
         set_select_value(page, "#labProductCode", process_cfg["parcel"]["product_code"], timeouts["action"])
 
         click_selector(page, "#pickupSaveBtn", timeouts["action"])
-        click_link_by_text(page, "다음", "#pickupInfoDiv", timeouts["action"])
+        if not click_link_by_text(page, "다음", "#pickupInfoDiv", timeouts["action"]):
+            raise RuntimeError("방문접수 소포정보 다음 버튼을 찾지 못했습니다.")
 
         recipient_cfg = process_cfg["recipient"]
-        manual_entry_required = not recipient_cfg["use_address_book"]
-        if recipient_cfg["use_address_book"]:
-            address_book_cfg = process_cfg["address_book"]
-            page4 = open_address_book_popup(page, config, timeouts["action"])
-            page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
-            step_delay(page4, timeouts["action"])
-            page4.get_by_text(address_book_cfg["confirm_text"]).first.click()
-            step_delay(page4, timeouts["action"])
-            page4.wait_for_load_state("domcontentloaded")
-            page4.once("dialog", lambda dialog: dialog.dismiss())
-            if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
-                manual_entry_required = True
-                step_delay(page4, timeouts["action"])
-                page4.close()
-            else:
-                name_locator = page4.get_by_text(recipient_cfg["name"])
-                if name_locator.count() == 0:
-                    manual_entry_required = True
-                else:
-                    name_locator.first.click()
-                    step_delay(page4, timeouts["action"])
-                page4.close()
-        if manual_entry_required:
-            fill_manual_recipient(page, config, timeouts)
+        if not recipient_cfg["use_address_book"]:
+            raise RuntimeError("주소록 사용이 비활성화되어 있습니다.")
+        address_book_cfg = process_cfg["address_book"]
+        page4 = open_address_book_popup(page, config, timeouts["action"])
+        page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
+        step_delay(page4, timeouts["action"])
+        page4.once("dialog", lambda dialog: dialog.dismiss())
+        if not click_link_by_text(page4, address_book_cfg["confirm_text"], timeout_ms=timeouts["action"]):
+            page4.close()
+            raise RuntimeError("주소록 확인 링크를 찾지 못했습니다.")
+        step_delay(page4, timeouts["action"])
+        page4.wait_for_load_state("domcontentloaded")
+        if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
+            page4.close()
+            raise RuntimeError("주소록이 비어 있습니다.")
+        if not click_link_by_text(page4, recipient_cfg["name"], timeout_ms=timeouts["action"]):
+            page4.close()
+            raise RuntimeError("주소록에서 수취인을 찾지 못했습니다.")
+        step_delay(page4, timeouts["action"])
+        page4.close()
+
+        click_next_button(page, config, timeouts["action"])
 
         item_info_cfg = process_cfg["item_info"]
         page_item = open_item_info_popup(page, config, timeouts["action"])
         page_item.once("dialog", lambda dialog: dialog.dismiss())
         select_item_in_popup(page_item, item_info_cfg["item_selection_text"], timeouts["action"])
+        fill_delivery_note(page, config, timeouts["action"])
+        click_next_button(page, config, timeouts["action"])
 
-        page.once("dialog", lambda dialog: dialog.dismiss())
         add_to_recipient_list(page, config, timeouts["action"])
 
-        page.once("dialog", lambda dialog: dialog.dismiss())
         validate_address(page, config, timeouts["action"])
 
         click_selector(page, "#imgBtn", timeouts["action"])
         click_selector(page, "#btnAddr", timeouts["action"])
-        click_link_by_text(page, "다음", "#recListNextDiv", timeouts["action"])
+        if not click_link_by_text(page, "다음", "#recListNextDiv", timeouts["action"]):
+            raise RuntimeError("받는 분 목록 다음 버튼을 찾지 못했습니다.")
 
-        card_cfg = process_cfg["payment"]
-        card_numbers = card_cfg["card_numbers"]
-        set_input_value(page, "#creditNo1", card_numbers[0], timeouts["action"])
-        set_input_value(page, "#creditNo2", card_numbers[1], timeouts["action"])
-        set_input_value(page, "#creditNo3", card_numbers[2], timeouts["action"])
-        set_input_value(page, "#creditNo4", card_numbers[3], timeouts["action"])
-
-        expiry = card_cfg["expiry"]
-        set_input_value(page, "#creditExp1", expiry[0], timeouts["action"])
-        set_input_value(page, "#creditExp2", expiry[1], timeouts["action"])
-
-        pwd_digits = card_cfg["password_digits"]
-        set_input_value(page, "#creditPwd1", pwd_digits[0], timeouts["action"])
-        set_input_value(page, "#creditPwd2", pwd_digits[1], timeouts["action"])
-        set_input_value(page, "#creditBirth", card_cfg["birthdate"], timeouts["action"])
-
-        click_selector(page, "#certCreditInfo", timeouts["action"])
+        step_delay(page, timeouts["action"])
 
         print("Test completed successfully!")
     except Exception as exc:

@@ -57,6 +57,24 @@ epost:
 
   # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
+    navigation:
+      menu_steps:
+        - text: "국내소포"
+          index: 1
+        - text: "방문접수소포 반품예약"
+          index: 2
+        - text: "menu"
+          index: 0
+        - text: "방문접수소포 방문접수예약"
+          index: 0
+
+    next_button:
+      selectors:
+        - "a"
+        - "button"
+      text_contains:
+        - "다음"
+
     # 택배 신청 정보
     parcel:
       agree_checkbox_text: "우편금지물품"
@@ -68,7 +86,7 @@ epost:
       volume_code: "80"
       product_code: "023"
 
-    # 주소 검색 팝업 설정
+    # 주소 검색 팝업 설정 (보내는 분)
     address_popup:
       trigger_onclick_contains: "newRePostNum"
       trigger_text_contains: "주소찾기"
@@ -87,6 +105,14 @@ epost:
       unit: "912"
       submit_text_contains: "입력"
 
+    sender:
+      phone:
+        middle: "3532"
+        last: "1342"
+      phone_selectors:
+        middle: 'input[title*="보내는 분의 휴대전화 중간자리"]'
+        last: 'input[title*="보내는 분의 휴대전화 뒷자리"]'
+
     # 주소록 관련
     address_book:
       search_text: "주소록 검색"
@@ -98,6 +124,9 @@ epost:
     item_info:
       popup_trigger_text: "물품정보 불러오기"
       item_selection_text: "전자제품"
+      delivery_note: "없을 시 010-3532-1342로 연락바랍니다."
+      delivery_note_label_contains:
+        - "배송시 특이사항"
 
     recipient_list:
       add_button_text: "받는 분 목록에 추가"
