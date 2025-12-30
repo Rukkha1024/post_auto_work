@@ -41,3 +41,11 @@ Read 'progress/' folder's file and use playwright mcp before run the script.
 5. 배송시 특이사항 작성 
 6. "받는 분 목록에 추가" 클릭 
 </problem>
+
+------===========
+- [ ] 주소검증에서 원래 육지연 2개 나오나? 
+
+==========
+'b424a27b1c8c02e2391ec9df8eb97fe9e3fe56f8' 방금 한게 SKILLS 사용해서 한 것 같아. 이거 괜찮네. 아예 이렇게 리팩토링 해줄 수 있나? 
+config.yaml의 "working_process" 에 한해서 리팩토링해라. 
+그리고 기존 결과물과 동일한지 철저하게 검증해야 한다. 
