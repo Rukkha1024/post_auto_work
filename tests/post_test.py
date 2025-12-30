@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from playwright.sync_api import Error as PlaywrightError
@@ -20,6 +23,133 @@ def load_config() -> dict:
 
 def ensure_progress_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def canonicalize_url(url: str) -> str:
+    if not url:
+        return ""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def sha256_text(value: str) -> str:
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        value = str(value)
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def collect_validation_snapshot(page) -> dict:
+    fields_spec = {
+        "wish_receipt_date": {"selector": ['select[name="wishReceiptTime"]'], "kind": "value"},
+        "wish_receipt_time": {"selector": ['select[name="wishReceiptTimeNm"]'], "kind": "value"},
+        "pickup_keep": {"selector": ['select[name="pickupKeep"]'], "kind": "value"},
+        "pickup_keep_note": {"selector": ['input[name="pickupKeepNm"]'], "kind": "value"},
+        "weight_code": {"selector": ["#limit_wg", "#tmpWght1"], "kind": "value"},
+        "volume_code": {"selector": ["#limit_vol", "#tmpVol1"], "kind": "value"},
+        "product_code": {"selector": ["#labProductCode"], "kind": "value"},
+        "contents": {"selector": ["#labcont"], "kind": "value"},
+        "delivery_note": {"selector": ["#labdemand"], "kind": "value"},
+        "receiver_name": {"selector": ['input[name="receiverName"]'], "kind": "value"},
+        "receiver_detail_address": {"selector": ['input[name="reDetailAddr"]'], "kind": "value"},
+        "receiver_phone_1": {"selector": ["#reCell1"], "kind": "value"},
+        "receiver_phone_2": {"selector": ["#reCell2"], "kind": "value"},
+        "receiver_phone_3": {"selector": ["#reCell3"], "kind": "value"},
+        "payment_card_no1": {"selector": ["#creditNo1"], "kind": "value"},
+        "payment_card_no2": {"selector": ["#creditNo2"], "kind": "value"},
+        "payment_card_no3": {"selector": ["#creditNo3"], "kind": "value"},
+        "payment_card_no4": {"selector": ["#creditNo4"], "kind": "value"},
+        "payment_expiry_month": {"selector": ["#creditExp1"], "kind": "value"},
+        "payment_expiry_year": {"selector": ["#creditExp2"], "kind": "value"},
+        "payment_password_digit1": {"selector": ["#creditPwd1"], "kind": "value"},
+        "payment_password_digit2": {"selector": ["#creditPwd2"], "kind": "value"},
+        "payment_birthdate": {"selector": ["#creditBirth"], "kind": "value"},
+        "payment_mobile_receipt_yes": {"selector": ["#mreceipt_y"], "kind": "checked"},
+        "payment_mobile_receipt_no": {"selector": ["#mreceipt_n"], "kind": "checked"},
+    }
+
+    raw_fields = page.evaluate(
+        """(spec) => {
+            const out = {};
+            const pickFirst = (selectors) => {
+                const list = Array.isArray(selectors) ? selectors : [selectors];
+                for (const sel of list) {
+                    if (!sel) continue;
+                    const el = document.querySelector(sel);
+                    if (el) return el;
+                }
+                return null;
+            };
+
+            for (const [key, cfg] of Object.entries(spec || {})) {
+                const el = pickFirst(cfg.selector);
+                if (!el) {
+                    out[key] = null;
+                    continue;
+                }
+                if (cfg.kind === 'checked') {
+                    out[key] = !!el.checked;
+                } else if (cfg.kind === 'text') {
+                    out[key] = (el.textContent || '').toString();
+                } else {
+                    out[key] = (el.value ?? '').toString();
+                }
+            }
+            return out;
+        }""",
+        fields_spec,
+    )
+
+    title = ""
+    try:
+        title = page.title() or ""
+    except PlaywrightError:
+        title = ""
+
+    url = ""
+    try:
+        url = canonicalize_url(page.url)
+    except Exception:
+        url = ""
+
+    fields: dict[str, object] = {}
+    for key, value in (raw_fields or {}).items():
+        if value is None:
+            fields[key] = None
+            continue
+        if isinstance(value, str):
+            cleaned = value.strip()
+        else:
+            cleaned = value
+
+        if key.startswith("payment_") and key not in {"payment_mobile_receipt_yes", "payment_mobile_receipt_no"}:
+            fields[key] = sha256_text(str(cleaned))
+        else:
+            fields[key] = cleaned
+
+    return {"url": url, "title": title, "fields": fields}
+
+
+def write_success_artifacts(page, progress_dir: Path, prefix: str) -> tuple[Path, Path] | None:
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    screenshot_path = progress_dir / f"{prefix}_{timestamp}.png"
+    snapshot_path = progress_dir / f"{prefix}_{timestamp}.jsonl"
+    try:
+        snapshot = collect_validation_snapshot(page)
+        snapshot_path.write_text(
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        return None
+
+    try:
+        page.screenshot(path=str(screenshot_path), full_page=True)
+    except Exception:
+        pass
+
+    return screenshot_path, snapshot_path
 
 
 def step_delay(page, timeout_ms: int | None) -> None:
@@ -697,20 +827,15 @@ def fill_item_info_fields(page, config: dict, timeout_ms: int | None = None) -> 
     parcel_cfg = process_cfg["parcel"]
     item_info_cfg = process_cfg["item_info"]
 
-    weight_selectors = [
-        parcel_cfg.get("weight_selector"),
-        "#limit_wg",
-        "#tmpWght1",
-    ]
-    volume_selectors = [
-        parcel_cfg.get("volume_selector"),
-        "#limit_vol",
-        "#tmpVol1",
-    ]
-    product_selectors = [
-        parcel_cfg.get("product_code_selector"),
-        "#labProductCode",
-    ]
+    weight_selectors = parcel_cfg.get("weight_selectors")
+    if not isinstance(weight_selectors, list) or not weight_selectors:
+        weight_selectors = [parcel_cfg.get("weight_selector"), "#limit_wg", "#tmpWght1"]
+    volume_selectors = parcel_cfg.get("volume_selectors")
+    if not isinstance(volume_selectors, list) or not volume_selectors:
+        volume_selectors = [parcel_cfg.get("volume_selector"), "#limit_vol", "#tmpVol1"]
+    product_selectors = parcel_cfg.get("product_code_selectors")
+    if not isinstance(product_selectors, list) or not product_selectors:
+        product_selectors = [parcel_cfg.get("product_code_selector"), "#labProductCode"]
 
     if not set_select_value_any(page, weight_selectors, parcel_cfg.get("weight_code"), timeout_ms):
         raise RuntimeError("중량 선택 필드를 찾지 못했습니다.")
@@ -916,16 +1041,23 @@ def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
     recipient_cfg = process_cfg["recipient"]
-    set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"], timeouts["action"])
+    selector_fields = (recipient_cfg.get("selectors") or {}).get("fields") or {}
+    name_selector = selector_fields.get("name", 'input[name="receiverName"]')
+    detail_addr_selector = selector_fields.get("detail_address", 'input[name="reDetailAddr"]')
+    phone_1_selector = selector_fields.get("phone_1", "#reCell1")
+    phone_2_selector = selector_fields.get("phone_2", "#reCell2")
+    phone_3_selector = selector_fields.get("phone_3", "#reCell3")
+
+    set_input_value(page, name_selector, recipient_cfg["name"], timeouts["action"])
     page2 = open_address_popup(page, config, timeouts["action"], target="recipient")
     fill_address_popup(page2, config, timeouts["action"])
     step_delay(page2, timeouts["action"])
     page2.close()
-    set_input_value(page, 'input[name="reDetailAddr"]', recipient_cfg["detail_address"], timeouts["action"])
+    set_input_value(page, detail_addr_selector, recipient_cfg["detail_address"], timeouts["action"])
     phone_parts = recipient_cfg["phone"]["mobile"]
-    set_input_value(page, "#reCell1", phone_parts[0], timeouts["action"])
-    set_input_value(page, "#reCell2", phone_parts[1], timeouts["action"])
-    set_input_value(page, "#reCell3", phone_parts[2], timeouts["action"])
+    set_input_value(page, phone_1_selector, phone_parts[0], timeouts["action"])
+    set_input_value(page, phone_2_selector, phone_parts[1], timeouts["action"])
+    set_input_value(page, phone_3_selector, phone_parts[2], timeouts["action"])
 
 
 def run(playwright: Playwright) -> None:
@@ -1006,53 +1138,73 @@ def run(playwright: Playwright) -> None:
         fill_sender_section(page, config, timeouts)
         click_next_button(page, config, timeouts["action"])
 
+        parcel_cfg = process_cfg["parcel"]
+        parcel_selectors_cfg = parcel_cfg.get("selectors") or {}
+        parcel_field_selectors = parcel_selectors_cfg.get("fields") or {}
+
         if not set_select_value(
             page,
-            'select[name="wishReceiptTime"]',
-            process_cfg["parcel"]["wish_receipt_date"],
+            parcel_field_selectors.get("wish_receipt_date", 'select[name="wishReceiptTime"]'),
+            parcel_cfg["wish_receipt_date"],
             timeouts["action"],
         ):
             raise RuntimeError("방문일 선택 필드를 찾지 못했습니다.")
         if not set_select_value(
             page,
-            'select[name="wishReceiptTimeNm"]',
-            process_cfg["parcel"]["wish_receipt_time"],
+            parcel_field_selectors.get("wish_receipt_time", 'select[name="wishReceiptTimeNm"]'),
+            parcel_cfg["wish_receipt_time"],
             timeouts["action"],
         ):
             raise RuntimeError("방문시간 선택 필드를 찾지 못했습니다.")
         if not set_select_value(
             page,
-            'select[name="pickupKeep"]',
-            process_cfg["parcel"]["pickup_keep_code"],
+            parcel_field_selectors.get("pickup_keep", 'select[name="pickupKeep"]'),
+            parcel_cfg["pickup_keep_code"],
             timeouts["action"],
         ):
             raise RuntimeError("보관방법 선택 필드를 찾지 못했습니다.")
         set_input_value(
-            page, 'input[name="pickupKeepNm"]', process_cfg["parcel"]["pickup_keep_note"], timeouts["action"]
+            page,
+            parcel_field_selectors.get("pickup_keep_note", 'input[name="pickupKeepNm"]'),
+            parcel_cfg["pickup_keep_note"],
+            timeouts["action"],
         )
 
-        parcel_cfg = process_cfg["parcel"]
+        weight_selectors = parcel_cfg.get("weight_selectors")
+        if not isinstance(weight_selectors, list) or not weight_selectors:
+            weight_selectors = [parcel_cfg.get("weight_selector"), "#limit_wg", "#tmpWght1"]
+        volume_selectors = parcel_cfg.get("volume_selectors")
+        if not isinstance(volume_selectors, list) or not volume_selectors:
+            volume_selectors = [parcel_cfg.get("volume_selector"), "#limit_vol", "#tmpVol1"]
+        product_selectors = parcel_cfg.get("product_code_selectors")
+        if not isinstance(product_selectors, list) or not product_selectors:
+            product_selectors = [parcel_cfg.get("product_code_selector"), "#labProductCode"]
+
         set_select_value_any(
             page,
-            [parcel_cfg.get("weight_selector"), "#limit_wg", "#tmpWght1"],
+            weight_selectors,
             parcel_cfg.get("weight_code"),
             timeouts["action"],
         )
         set_select_value_any(
             page,
-            [parcel_cfg.get("volume_selector"), "#limit_vol", "#tmpVol1"],
+            volume_selectors,
             parcel_cfg.get("volume_code"),
             timeouts["action"],
         )
         set_select_value_any(
             page,
-            [parcel_cfg.get("product_code_selector"), "#labProductCode"],
+            product_selectors,
             parcel_cfg.get("product_code"),
             timeouts["action"],
         )
 
-        click_selector(page, "#pickupSaveBtn", timeouts["action"])
-        if not click_link_by_text(page, "다음", "#pickupInfoDiv", timeouts["action"]):
+        pickup_save_selector = (parcel_selectors_cfg.get("buttons") or {}).get("pickup_save", "#pickupSaveBtn")
+        click_selector(page, pickup_save_selector, timeouts["action"])
+        pickup_next_cfg = parcel_selectors_cfg.get("next") or {}
+        pickup_next_container = pickup_next_cfg.get("container_selector", "#pickupInfoDiv")
+        pickup_next_text = pickup_next_cfg.get("text", "다음")
+        if not click_link_by_text(page, pickup_next_text, pickup_next_container, timeouts["action"]):
             raise RuntimeError("방문접수 소포정보 다음 버튼을 찾지 못했습니다.")
 
         recipient_cfg = process_cfg["recipient"]
@@ -1060,7 +1212,11 @@ def run(playwright: Playwright) -> None:
             raise RuntimeError("주소록 사용이 비활성화되어 있습니다.")
         address_book_cfg = process_cfg["address_book"]
         page4 = open_address_book_popup(page, config, timeouts["action"])
-        page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
+        group_selectors = (address_book_cfg.get("selectors") or {}).get("group_selectors")
+        if not isinstance(group_selectors, list) or not group_selectors:
+            group_selectors = ["select"]
+        if not set_select_value_any(page4, group_selectors, recipient_cfg["address_book_group_value"], timeouts["action"]):
+            page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
         step_delay(page4, timeouts["action"])
         page4.on("dialog", accept_dialog_safely)
         if not click_link_by_text(page4, address_book_cfg["confirm_text"], timeout_ms=timeouts["action"]):
@@ -1072,7 +1228,9 @@ def run(playwright: Playwright) -> None:
             page4.close()
             raise RuntimeError("주소록이 비어 있습니다.")
         recipient_name = recipient_cfg["name"]
-        receiver_check_arg = {"selector": 'input[name="receiverName"]', "token": recipient_name}
+        recipient_selector_fields = (recipient_cfg.get("selectors") or {}).get("fields") or {}
+        receiver_name_selector = recipient_selector_fields.get("name", 'input[name="receiverName"]')
+        receiver_check_arg = {"selector": receiver_name_selector, "token": recipient_name}
 
         def _wait_receiver_applied(check_arg: dict, timeout_ms: int) -> bool:
             try:
@@ -1160,9 +1318,17 @@ def run(playwright: Playwright) -> None:
 
         validate_address(page, config, timeouts["action"])
 
-        click_selector(page, "#imgBtn", timeouts["action"])
-        click_selector(page, "#btnAddr", timeouts["action"])
-        if not click_link_by_text(page, "다음", "#recListNextDiv", timeouts["action"]):
+        recipient_list_cfg = process_cfg["recipient_list"]
+        recipient_list_selectors = recipient_list_cfg.get("selectors") or {}
+        list_buttons = recipient_list_selectors.get("buttons") or {}
+        img_btn_selector = list_buttons.get("img_btn", "#imgBtn")
+        addr_btn_selector = list_buttons.get("addr_btn", "#btnAddr")
+        click_selector(page, img_btn_selector, timeouts["action"])
+        click_selector(page, addr_btn_selector, timeouts["action"])
+        list_next_cfg = recipient_list_selectors.get("next") or {}
+        list_next_container = list_next_cfg.get("container_selector", "#recListNextDiv")
+        list_next_text = list_next_cfg.get("text", "다음")
+        if not click_link_by_text(page, list_next_text, list_next_container, timeouts["action"]):
             raise RuntimeError("받는 분 목록 다음 버튼을 찾지 못했습니다.")
 
         step_delay(page, timeouts["action"])
@@ -1170,6 +1336,7 @@ def run(playwright: Playwright) -> None:
         handle_payment_step_06(page, config, timeouts)
         step_delay(page, timeouts["action"])
 
+        write_success_artifacts(page, progress_dir, prefix="post_test_success")
         print("Test completed successfully!")
     except Exception as exc:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
