@@ -85,6 +85,15 @@ def set_select_value(page, selector: str, value: str, timeout_ms: int | None = N
     return updated
 
 
+def set_select_value_if_configured(
+    page, selector: str, value: str | None, timeout_ms: int | None, error_message: str
+) -> None:
+    if value is None or value == "":
+        return
+    if not set_select_value(page, selector, value, timeout_ms):
+        raise RuntimeError(error_message)
+
+
 def set_input_by_label_tokens(page, label_tokens: list[str], value: str, timeout_ms: int | None = None) -> bool:
     if value is None or not label_tokens:
         return False
@@ -132,6 +141,12 @@ def click_selector(page, selector: str, timeout_ms: int | None = None) -> bool:
     if clicked:
         step_delay(page, timeout_ms)
     return clicked
+
+
+def click_selectors(page, selectors: list[str], timeout_ms: int | None = None) -> None:
+    for selector in selectors:
+        if not click_selector(page, selector, timeout_ms):
+            raise RuntimeError(f"선택자를 찾지 못했습니다: {selector}")
 
 
 def click_link_by_text(
@@ -243,10 +258,15 @@ def click_visible_element_by_text(
     return clicked
 
 
-def click_next_button(page, config: dict, timeout_ms: int | None = None) -> None:
+def click_next_button(page, config: dict, timeout_ms: int | None = None, index: int | None = None) -> None:
     process_cfg = config["epost"]["working_process"]
     next_cfg = process_cfg["next_button"]
-    clicked = click_visible_element_by_text(page, next_cfg["selectors"], next_cfg["text_contains"], timeout_ms)
+    if index is None:
+        clicked = click_visible_element_by_text(page, next_cfg["selectors"], next_cfg["text_contains"], timeout_ms)
+    else:
+        text_tokens = next_cfg.get("text_contains", [])
+        text = text_tokens[0] if text_tokens else "다음"
+        clicked = click_link_by_text_index(page, text, index, timeout_ms=timeout_ms)
     if not clicked:
         raise RuntimeError("다음 버튼을 찾지 못했습니다.")
 
@@ -573,9 +593,34 @@ def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
     )
 
 
+def select_recipient_from_address_book(page, config: dict, timeout_ms: int | None = None) -> None:
+    process_cfg = config["epost"]["working_process"]
+    address_book_cfg = process_cfg["address_book"]
+    recipient_cfg = process_cfg["recipient"]
+    selectors = address_book_cfg.get("recipient_selectors", ["a"])
+    clicked = click_visible_element_by_text(page, selectors, [recipient_cfg["name"]], timeout_ms)
+    if not clicked:
+        raise RuntimeError("주소록에서 수취인을 찾지 못했습니다.")
+
+
+def fill_sender_name(page, config: dict, timeout_ms: int | None = None) -> None:
+    sender_cfg = config["epost"]["working_process"]["sender"]
+    name = sender_cfg.get("name")
+    if not name:
+        return
+    selectors = sender_cfg.get("name_selectors", [])
+    for selector in selectors:
+        if set_input_value(page, selector, name, timeout_ms):
+            return
+    if set_input_by_label_tokens(page, sender_cfg.get("name_label_contains", []), name, timeout_ms):
+        return
+    raise RuntimeError("보내는 분 이름 입력 필드를 찾지 못했습니다.")
+
+
 def fill_sender_section(page, config: dict, timeouts: dict) -> None:
     process_cfg = config["epost"]["working_process"]
     sender_cfg = process_cfg["sender"]
+    fill_sender_name(page, config, timeouts["action"])
     page2 = open_address_popup(page, config, timeouts["action"])
     fill_address_popup(page2, config, timeouts["action"])
     step_delay(page2, timeouts["action"])
@@ -627,6 +672,14 @@ def run(playwright: Playwright) -> None:
         args=script_cfg["browser"]["args"],
     )
     context = browser.new_context()
+    permissions = script_cfg["browser"].get("permissions", [])
+    permission_origins = script_cfg["browser"].get("permissions_origins", [])
+    if permissions:
+        if permission_origins:
+            for origin in permission_origins:
+                context.grant_permissions(permissions, origin=origin)
+        else:
+            context.grant_permissions(permissions)
     attach_popup_closer(context, script_cfg["popups"]["close_url_contains"], timeouts["popup"])
     page = context.new_page()
     attach_dialog_handler(page, script_cfg["login"]["accept_dialog_contains"])
@@ -680,36 +733,53 @@ def run(playwright: Playwright) -> None:
         fill_sender_section(page, config, timeouts)
         click_next_button(page, config, timeouts["action"])
 
+        parcel_cfg = process_cfg["parcel"]
         if not set_select_value(
             page,
             'select[name="wishReceiptTime"]',
-            process_cfg["parcel"]["wish_receipt_date"],
+            parcel_cfg["wish_receipt_date"],
             timeouts["action"],
         ):
             raise RuntimeError("방문일 선택 필드를 찾지 못했습니다.")
-        if not set_select_value(
+        set_select_value_if_configured(
             page,
             'select[name="wishReceiptTimeNm"]',
-            process_cfg["parcel"]["wish_receipt_time"],
+            parcel_cfg.get("wish_receipt_time"),
             timeouts["action"],
-        ):
-            raise RuntimeError("방문시간 선택 필드를 찾지 못했습니다.")
+            "방문시간 선택 필드를 찾지 못했습니다.",
+        )
         if not set_select_value(
             page,
             'select[name="pickupKeep"]',
-            process_cfg["parcel"]["pickup_keep_code"],
+            parcel_cfg["pickup_keep_code"],
             timeouts["action"],
         ):
             raise RuntimeError("보관방법 선택 필드를 찾지 못했습니다.")
-        set_input_value(
-            page, 'input[name="pickupKeepNm"]', process_cfg["parcel"]["pickup_keep_note"], timeouts["action"]
+        set_input_value(page, 'input[name="pickupKeepNm"]', parcel_cfg.get("pickup_keep_note"), timeouts["action"])
+
+        set_select_value_if_configured(
+            page,
+            "#tmpWght1",
+            parcel_cfg.get("weight_code"),
+            timeouts["action"],
+            "무게 선택 필드를 찾지 못했습니다.",
+        )
+        set_select_value_if_configured(
+            page,
+            "#tmpVol1",
+            parcel_cfg.get("volume_code"),
+            timeouts["action"],
+            "부피 선택 필드를 찾지 못했습니다.",
+        )
+        set_select_value_if_configured(
+            page,
+            "#labProductCode",
+            parcel_cfg.get("product_code"),
+            timeouts["action"],
+            "상품코드 선택 필드를 찾지 못했습니다.",
         )
 
-        set_select_value(page, "#tmpWght1", process_cfg["parcel"]["weight_code"], timeouts["action"])
-        set_select_value(page, "#tmpVol1", process_cfg["parcel"]["volume_code"], timeouts["action"])
-        set_select_value(page, "#labProductCode", process_cfg["parcel"]["product_code"], timeouts["action"])
-
-        click_selector(page, "#pickupSaveBtn", timeouts["action"])
+        click_selectors(page, parcel_cfg.get("pre_next_click_selectors", []), timeouts["action"])
         if not click_link_by_text(page, "다음", "#pickupInfoDiv", timeouts["action"]):
             raise RuntimeError("방문접수 소포정보 다음 버튼을 찾지 못했습니다.")
 
@@ -729,27 +799,32 @@ def run(playwright: Playwright) -> None:
         if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
             page4.close()
             raise RuntimeError("주소록이 비어 있습니다.")
-        if not click_link_by_text(page4, recipient_cfg["name"], timeout_ms=timeouts["action"]):
+        try:
+            select_recipient_from_address_book(page4, config, timeouts["action"])
+        except RuntimeError:
             page4.close()
-            raise RuntimeError("주소록에서 수취인을 찾지 못했습니다.")
+            raise
         step_delay(page4, timeouts["action"])
         page4.close()
 
-        click_next_button(page, config, timeouts["action"])
+        click_next_button(page, config, timeouts["action"], index=recipient_cfg.get("next_button_index"))
 
         item_info_cfg = process_cfg["item_info"]
         page_item = open_item_info_popup(page, config, timeouts["action"])
         page_item.once("dialog", lambda dialog: dialog.dismiss())
         select_item_in_popup(page_item, item_info_cfg["item_selection_text"], timeouts["action"])
         fill_delivery_note(page, config, timeouts["action"])
-        click_next_button(page, config, timeouts["action"])
+        if item_info_cfg.get("next_after_item", True):
+            click_next_button(page, config, timeouts["action"])
 
+        recipient_list_cfg = process_cfg["recipient_list"]
+        page.once("dialog", lambda dialog: dialog.dismiss())
         add_to_recipient_list(page, config, timeouts["action"])
 
+        page.once("dialog", lambda dialog: dialog.dismiss())
         validate_address(page, config, timeouts["action"])
 
-        click_selector(page, "#imgBtn", timeouts["action"])
-        click_selector(page, "#btnAddr", timeouts["action"])
+        click_selectors(page, recipient_list_cfg.get("pre_next_click_selectors", []), timeouts["action"])
         if not click_link_by_text(page, "다음", "#recListNextDiv", timeouts["action"]):
             raise RuntimeError("받는 분 목록 다음 버튼을 찾지 못했습니다.")
 

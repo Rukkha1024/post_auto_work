@@ -18,7 +18,12 @@ epost:
       args:
         - "--disable-notifications"
         - "--disable-features=BlockInsecurePrivateNetworkRequests"
-      keep_open_after_run: false
+      permissions:
+        - "notifications"
+      permissions_origins:
+        - "https://www.epost.go.kr"
+        - "https://parcel.epost.go.kr"
+      keep_open_after_run: true
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
@@ -59,10 +64,8 @@ epost:
   working_process:
     navigation:
       menu_steps:
-        - text: "국내소포"
-          index: 1
         - text: "방문접수소포 반품예약"
-          index: 2
+          index: 1
         - text: "menu"
           index: 0
         - text: "방문접수소포 방문접수예약"
@@ -78,13 +81,14 @@ epost:
     # 택배 신청 정보
     parcel:
       agree_checkbox_text: "우편금지물품"
-      wish_receipt_date: "2025-12-31"
-      wish_receipt_time: "09:00~11:00"
+      wish_receipt_date: "2026-01-05"
+      wish_receipt_time: null
       pickup_keep_code: "05"
       pickup_keep_note: "문 앞에 있어요"
-      weight_code: "11"
-      volume_code: "80"
-      product_code: "023"
+      weight_code: null
+      volume_code: null
+      product_code: null
+      pre_next_click_selectors: []
 
     # 주소 검색 팝업 설정 (보내는 분)
     address_popup:
@@ -106,6 +110,12 @@ epost:
       submit_text_contains: "입력"
 
     sender:
+      name: "조민석"
+      name_selectors:
+        - 'input[title*="이름"]'
+        - 'input[name="senderName"]'
+      name_label_contains:
+        - "이름"
       phone:
         middle: "3532"
         last: "1342"
@@ -120,6 +130,10 @@ epost:
       empty_text_contains:
         - "주소록이 없습니다"
         - "등록된 주소록이 없습니다"
+      recipient_selectors:
+        - "a"
+        - "td"
+        - "[role='cell']"
 
     item_info:
       popup_trigger_text: "물품정보 불러오기"
@@ -127,9 +141,11 @@ epost:
       delivery_note: "없을 시 010-3532-1342로 연락바랍니다."
       delivery_note_label_contains:
         - "배송시 특이사항"
+      next_after_item: false
 
     recipient_list:
       add_button_text: "받는 분 목록에 추가"
+      pre_next_click_selectors: []
 
     address_validation:
       button_text: "주소검증"
@@ -139,6 +155,7 @@ epost:
       use_address_book: true
       name: "육지연"
       address_book_group_value: "0"
+      next_button_index: 2
       phone:
         mobile: ["010", "0000", "0000"]
       detail_address: "103동 912호"
