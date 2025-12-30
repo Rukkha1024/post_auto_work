@@ -28,7 +28,7 @@ epost:
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
       page_stabilize: 1000
-      login_wait: 10000
+      login_wait: 1000
       popup: 10000
       action: 1000
       keep_open_poll_ms: 1000
@@ -98,8 +98,12 @@ epost:
       wish_receipt_time: "09:00~11:00"
       pickup_keep_code: "05"
       pickup_keep_note: "문 앞에 있어요"
-      weight_code: "11"
-      volume_code: "80"
+      # 04 물품정보(포장박스크기) 선택값/셀렉터
+      weight_selector: "#limit_wg"
+      weight_code: "02" # 5kg
+      volume_selector: "#limit_vol"
+      volume_code: "02" # 80cm
+      product_code_selector: "#labProductCode"
       product_code: "023"
 
     # 주소 검색 팝업 설정 (보내는 분)
@@ -145,7 +149,11 @@ epost:
     item_info:
       popup_trigger_text: "물품정보 불러오기"
       item_selection_text: "전자제품"
+      contents_selector: "#labcont"
+      contents_text: "전자제품"
       delivery_note: "없을 시 010-3532-1342로 연락바랍니다."
+      delivery_note_selectors:
+        - "#labdemand"
       delivery_note_label_contains:
         - "배송시 특이사항"
 

@@ -102,6 +102,28 @@ def set_select_value(page, selector: str, value: str, timeout_ms: int | None = N
     return updated
 
 
+def set_select_value_any(page, selectors: list[str], value: str, timeout_ms: int | None = None) -> bool:
+    if value is None:
+        return False
+    for selector in selectors:
+        if not selector:
+            continue
+        if set_select_value(page, selector, value, timeout_ms):
+            return True
+    return False
+
+
+def set_input_value_any(page, selectors: list[str], value: str, timeout_ms: int | None = None) -> bool:
+    if value is None:
+        return False
+    for selector in selectors:
+        if not selector:
+            continue
+        if set_input_value(page, selector, value, timeout_ms):
+            return True
+    return False
+
+
 def set_input_by_label_tokens(page, label_tokens: list[str], value: str, timeout_ms: int | None = None) -> bool:
     if value is None or not label_tokens:
         return False
@@ -673,16 +695,97 @@ def open_item_info_popup(page, config: dict, timeout_ms: int):
 
 
 def select_item_in_popup(page, item_text: str, timeout_ms: int | None = None) -> None:
-    clicked = click_cell_by_text(page, item_text, timeout_ms=timeout_ms)
-    if not clicked:
+    try:
+        result = page.evaluate(
+            """(token) => {
+                const normalize = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const safeText = (el) => normalize(el?.textContent || '');
+                const safeAttr = (el, name) => normalize(el?.getAttribute(name) || '');
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                };
+
+                const links = Array.from(document.querySelectorAll('a')).filter(isVisible);
+                const target = links.find((a) => {
+                    const text = safeText(a);
+                    const title = safeAttr(a, 'title');
+                    return text.includes(token) || title.includes(token);
+                });
+                if (!target) return { found: false };
+
+                const onclick = (target.getAttribute('onclick') || '').toString();
+                const match = onclick.match(/setValue\\(['\\\"]([^'\\\"]+)['\\\"]\\)/);
+                if (match && typeof window.setValue === 'function') {
+                    const regseq = match[1];
+                    setTimeout(() => {
+                        try {
+                            window.setValue(regseq);
+                        } catch (e) {}
+                    }, 0);
+                    return { found: true, applied: true, method: 'setValue', regseq };
+                }
+
+                target.click();
+                return { found: true, applied: true, method: 'click' };
+            }""",
+            item_text,
+        )
+    except PlaywrightError:
+        return
+
+    if not result or not result.get("found"):
         raise RuntimeError("물품정보 팝업에서 품목을 찾지 못했습니다.")
+
     step_delay(page, timeout_ms)
+    try:
+        page.wait_for_event("close", timeout=timeout_ms or 2000)
+        return
+    except PlaywrightTimeoutError:
+        pass
     try:
         if hasattr(page, "is_closed") and page.is_closed():
             return
         page.close()
     except PlaywrightError:
         pass
+
+
+def fill_item_info_fields(page, config: dict, timeout_ms: int | None = None) -> None:
+    process_cfg = config["epost"]["working_process"]
+    parcel_cfg = process_cfg["parcel"]
+    item_info_cfg = process_cfg["item_info"]
+
+    weight_selectors = [
+        parcel_cfg.get("weight_selector"),
+        "#limit_wg",
+        "#tmpWght1",
+    ]
+    volume_selectors = [
+        parcel_cfg.get("volume_selector"),
+        "#limit_vol",
+        "#tmpVol1",
+    ]
+    product_selectors = [
+        parcel_cfg.get("product_code_selector"),
+        "#labProductCode",
+    ]
+
+    if not set_select_value_any(page, weight_selectors, parcel_cfg.get("weight_code"), timeout_ms):
+        raise RuntimeError("중량 선택 필드를 찾지 못했습니다.")
+    if not set_select_value_any(page, volume_selectors, parcel_cfg.get("volume_code"), timeout_ms):
+        raise RuntimeError("크기 선택 필드를 찾지 못했습니다.")
+    if not set_select_value_any(page, product_selectors, parcel_cfg.get("product_code"), timeout_ms):
+        raise RuntimeError("내용물코드 선택 필드를 찾지 못했습니다.")
+
+    contents = item_info_cfg.get("contents_text") or item_info_cfg.get("item_selection_text")
+    if contents:
+        contents_selectors = [item_info_cfg.get("contents_selector"), "#labcont"]
+        if not set_input_value_any(page, contents_selectors, contents, timeout_ms):
+            raise RuntimeError("내용물 입력 필드를 찾지 못했습니다.")
 
 
 def fill_delivery_note(page, config: dict, timeout_ms: int | None = None) -> None:
@@ -698,6 +801,27 @@ def fill_delivery_note(page, config: dict, timeout_ms: int | None = None) -> Non
     if set_input_by_label_tokens(page, item_info_cfg.get("delivery_note_label_contains", []), note, timeout_ms):
         return
     raise RuntimeError("배송시 특이사항 입력 필드를 찾지 못했습니다.")
+
+
+def handle_item_info_step_04(page, config: dict, timeouts: dict) -> None:
+    process_cfg = config["epost"]["working_process"]
+    sections_cfg = process_cfg.get("sections", {})
+    item_heading = sections_cfg.get("item_info", {}).get("heading_text_contains")
+    if item_heading:
+        ensure_section_open(page, item_heading, timeouts["action"])
+
+    item_info_cfg = process_cfg["item_info"]
+    page_item = open_item_info_popup(page, config, timeouts["action"])
+    page_item.once("dialog", dismiss_dialog_safely)
+
+    select_item_in_popup(page_item, item_info_cfg["item_selection_text"], timeouts["popup"])
+    step_delay(page, timeouts["action"])
+
+    if item_heading:
+        ensure_section_open(page, item_heading, timeouts["action"])
+    fill_item_info_fields(page, config, timeouts["action"])
+    fill_delivery_note(page, config, timeouts["action"])
+    add_to_recipient_list(page, config, timeouts["action"])
 
 
 def add_to_recipient_list(page, config: dict, timeout_ms: int | None = None) -> None:
@@ -880,9 +1004,25 @@ def run(playwright: Playwright) -> None:
             page, 'input[name="pickupKeepNm"]', process_cfg["parcel"]["pickup_keep_note"], timeouts["action"]
         )
 
-        set_select_value(page, "#tmpWght1", process_cfg["parcel"]["weight_code"], timeouts["action"])
-        set_select_value(page, "#tmpVol1", process_cfg["parcel"]["volume_code"], timeouts["action"])
-        set_select_value(page, "#labProductCode", process_cfg["parcel"]["product_code"], timeouts["action"])
+        parcel_cfg = process_cfg["parcel"]
+        set_select_value_any(
+            page,
+            [parcel_cfg.get("weight_selector"), "#limit_wg", "#tmpWght1"],
+            parcel_cfg.get("weight_code"),
+            timeouts["action"],
+        )
+        set_select_value_any(
+            page,
+            [parcel_cfg.get("volume_selector"), "#limit_vol", "#tmpVol1"],
+            parcel_cfg.get("volume_code"),
+            timeouts["action"],
+        )
+        set_select_value_any(
+            page,
+            [parcel_cfg.get("product_code_selector"), "#labProductCode"],
+            parcel_cfg.get("product_code"),
+            timeouts["action"],
+        )
 
         click_selector(page, "#pickupSaveBtn", timeouts["action"])
         if not click_link_by_text(page, "다음", "#pickupInfoDiv", timeouts["action"]):
@@ -988,14 +1128,8 @@ def run(playwright: Playwright) -> None:
 
         click_next_button(page, config, timeouts["action"])
 
-        item_info_cfg = process_cfg["item_info"]
-        page_item = open_item_info_popup(page, config, timeouts["action"])
-        page_item.once("dialog", lambda dialog: dialog.dismiss())
-        select_item_in_popup(page_item, item_info_cfg["item_selection_text"], timeouts["action"])
-        fill_delivery_note(page, config, timeouts["action"])
+        handle_item_info_step_04(page, config, timeouts)
         click_next_button(page, config, timeouts["action"])
-
-        add_to_recipient_list(page, config, timeouts["action"])
 
         validate_address(page, config, timeouts["action"])
 
