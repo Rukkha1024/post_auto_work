@@ -71,6 +71,8 @@ epost:
         heading_text_contains: "04 물품정보"
       recipient_list:
         heading_text_contains: "05 받는 분 목록"
+      payment:
+        heading_text_contains: "06 결제수단 등록"
     navigation:
       menu_steps:
         - text: "국내소포"
@@ -178,3 +180,19 @@ epost:
       expiry: ["11", "11"]
       password_digits: ["1", "1"]
       birthdate: "111111"
+      mobile_receipt: "n"
+      selectors:
+        fields:
+          card_no1: "#creditNo1"
+          card_no2: "#creditNo2"
+          card_no3: "#creditNo3"
+          card_no4: "#creditNo4"
+          expiry_month: "#creditExp1"
+          expiry_year: "#creditExp2"
+          password_digit1: "#creditPwd1"
+          password_digit2: "#creditPwd2"
+          birthdate: "#creditBirth"
+        validate_button: "#certCreditInfo"
+        mobile_receipt:
+          yes: "#mreceipt_y"
+          no: "#mreceipt_n"

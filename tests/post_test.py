@@ -102,6 +102,24 @@ def set_select_value(page, selector: str, value: str, timeout_ms: int | None = N
     return updated
 
 
+def set_checkbox_checked(page, selector: str, checked: bool, timeout_ms: int | None = None) -> bool:
+    updated = page.evaluate(
+        """(payload) => {
+            const el = document.querySelector(payload.selector);
+            if (!el) return false;
+            if (typeof el.checked === 'undefined') return false;
+            el.checked = payload.checked;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }""",
+        {"selector": selector, "checked": checked},
+    )
+    if updated:
+        step_delay(page, timeout_ms)
+    return updated
+
+
 def set_select_value_any(page, selectors: list[str], value: str, timeout_ms: int | None = None) -> bool:
     if value is None:
         return False
@@ -759,6 +777,104 @@ def validate_address(page, config: dict, timeout_ms: int | None = None) -> None:
         raise RuntimeError("주소검증 링크를 찾지 못했습니다.")
 
 
+def handle_payment_step_06(page, config: dict, timeouts: dict) -> None:
+    process_cfg = config["epost"]["working_process"]
+    sections_cfg = process_cfg.get("sections", {})
+    payment_heading = sections_cfg.get("payment", {}).get("heading_text_contains")
+    if payment_heading:
+        if not ensure_section_open(page, payment_heading, timeouts["action"]):
+            raise RuntimeError("결제수단 등록 섹션을 찾지 못했습니다.")
+
+    payment_cfg = process_cfg["payment"]
+    selectors_cfg = payment_cfg.get("selectors", {})
+    field_selectors = selectors_cfg.get("fields", {})
+
+    card_numbers = payment_cfg.get("card_numbers") or []
+    if len(card_numbers) < 4:
+        raise RuntimeError("결제 카드번호 설정이 올바르지 않습니다.")
+
+    expiry = payment_cfg.get("expiry") or []
+    if len(expiry) < 2:
+        raise RuntimeError("결제 카드 유효기간 설정이 올바르지 않습니다.")
+
+    password_digits = payment_cfg.get("password_digits") or []
+    if len(password_digits) < 2:
+        raise RuntimeError("결제 카드 비밀번호(앞 2자리) 설정이 올바르지 않습니다.")
+
+    birthdate = payment_cfg.get("birthdate")
+    if not birthdate:
+        raise RuntimeError("결제 카드 생년월일 설정이 비어 있습니다.")
+
+    if not set_input_value(page, field_selectors.get("card_no1", "#creditNo1"), card_numbers[0], timeouts["action"]):
+        raise RuntimeError("카드번호(1) 입력 필드를 찾지 못했습니다.")
+    if not set_input_value(page, field_selectors.get("card_no2", "#creditNo2"), card_numbers[1], timeouts["action"]):
+        raise RuntimeError("카드번호(2) 입력 필드를 찾지 못했습니다.")
+    if not set_input_value(page, field_selectors.get("card_no3", "#creditNo3"), card_numbers[2], timeouts["action"]):
+        raise RuntimeError("카드번호(3) 입력 필드를 찾지 못했습니다.")
+    if not set_input_value(page, field_selectors.get("card_no4", "#creditNo4"), card_numbers[3], timeouts["action"]):
+        raise RuntimeError("카드번호(4) 입력 필드를 찾지 못했습니다.")
+
+    if not set_input_value(
+        page, field_selectors.get("expiry_month", "#creditExp1"), expiry[0], timeouts["action"]
+    ):
+        raise RuntimeError("유효기간(월) 입력 필드를 찾지 못했습니다.")
+    if not set_input_value(page, field_selectors.get("expiry_year", "#creditExp2"), expiry[1], timeouts["action"]):
+        raise RuntimeError("유효기간(년) 입력 필드를 찾지 못했습니다.")
+
+    if not set_input_value(
+        page, field_selectors.get("password_digit1", "#creditPwd1"), password_digits[0], timeouts["action"]
+    ):
+        raise RuntimeError("비밀번호(1) 입력 필드를 찾지 못했습니다.")
+    if not set_input_value(
+        page, field_selectors.get("password_digit2", "#creditPwd2"), password_digits[1], timeouts["action"]
+    ):
+        raise RuntimeError("비밀번호(2) 입력 필드를 찾지 못했습니다.")
+
+    if not set_input_value(page, field_selectors.get("birthdate", "#creditBirth"), birthdate, timeouts["action"]):
+        raise RuntimeError("생년월일 입력 필드를 찾지 못했습니다.")
+
+    receipt_choice = str(payment_cfg.get("mobile_receipt") or "").strip().lower()
+    receipt_selectors = (selectors_cfg.get("mobile_receipt") or {}) if isinstance(selectors_cfg, dict) else {}
+    if receipt_choice in {"y", "yes", "true", "1"}:
+        set_checkbox_checked(page, receipt_selectors.get("yes", "#mreceipt_y"), True, timeouts["action"])
+        set_checkbox_checked(page, receipt_selectors.get("no", "#mreceipt_n"), False, timeouts["action"])
+    elif receipt_choice in {"n", "no", "false", "0"}:
+        set_checkbox_checked(page, receipt_selectors.get("no", "#mreceipt_n"), True, timeouts["action"])
+        set_checkbox_checked(page, receipt_selectors.get("yes", "#mreceipt_y"), False, timeouts["action"])
+
+    validate_selector = selectors_cfg.get("validate_button", "#certCreditInfo")
+    if click_selector(page, validate_selector, timeouts["action"]):
+        return
+
+    clicked = page.evaluate(
+        """(sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
+            el.click();
+            return true;
+        }""",
+        validate_selector,
+    )
+    if clicked:
+        step_delay(page, timeouts["action"])
+        return
+
+    invoked = page.evaluate(
+        """() => {
+            if (typeof certCreditInfo === 'function') {
+                certCreditInfo();
+                return true;
+            }
+            return false;
+        }"""
+    )
+    if invoked:
+        step_delay(page, timeouts["action"])
+        return
+    raise RuntimeError("결제카드검증 버튼을 클릭하지 못했습니다.")
+
+
 def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
     if not empty_tokens:
         return False
@@ -1049,6 +1165,9 @@ def run(playwright: Playwright) -> None:
         if not click_link_by_text(page, "다음", "#recListNextDiv", timeouts["action"]):
             raise RuntimeError("받는 분 목록 다음 버튼을 찾지 못했습니다.")
 
+        step_delay(page, timeouts["action"])
+
+        handle_payment_step_06(page, config, timeouts)
         step_delay(page, timeouts["action"])
 
         print("Test completed successfully!")
