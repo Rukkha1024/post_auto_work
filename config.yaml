@@ -14,17 +14,19 @@ epost:
 
     # 브라우저 옵션 (headless: false = 창 보임, true = 백그라운드 실행)
     browser:
-      headless: true
+      headless: false
       args:
         - "--disable-notifications"
         - "--disable-features=BlockInsecurePrivateNetworkRequests"
+      keep_open_after_run: true
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
-      page_stabilize: 3000
-      login_wait: 15000
-      popup: 10000
-      action: 2000
+      page_stabilize: 1000
+      login_wait: 1000
+      popup: 1000
+      action: 1000
+      keep_open_poll_ms: 1000
 
     # 파일/폴더 경로
     paths:

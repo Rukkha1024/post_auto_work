@@ -32,6 +32,22 @@ def step_delay(page, timeout_ms: int | None) -> None:
             pass
 
 
+def wait_for_manual_close(page, keep_open: bool, poll_ms: int) -> None:
+    if not keep_open:
+        return
+    wait_ms = poll_ms if poll_ms and poll_ms > 0 else 1000
+    try:
+        while True:
+            if hasattr(page, "is_closed") and page.is_closed():
+                break
+            try:
+                page.wait_for_timeout(wait_ms)
+            except PlaywrightError:
+                break
+    except KeyboardInterrupt:
+        pass
+
+
 def set_input_value(page, selector: str, value: str, timeout_ms: int | None = None) -> bool:
     if value is None:
         return False
@@ -402,6 +418,8 @@ def run(playwright: Playwright) -> None:
     timeouts = script_cfg["timeouts_ms"]
     progress_dir = ROOT / script_cfg["paths"]["progress_dir"]
     ensure_progress_dir(progress_dir)
+    keep_open_after_run = script_cfg["browser"].get("keep_open_after_run", False)
+    keep_open_poll_ms = timeouts.get("keep_open_poll_ms", 1000)
 
     browser = playwright.chromium.launch(
         headless=script_cfg["browser"]["headless"],
@@ -412,6 +430,7 @@ def run(playwright: Playwright) -> None:
     page = context.new_page()
     attach_dialog_handler(page, script_cfg["login"]["accept_dialog_contains"])
 
+    error: Exception | None = None
     try:
         page.goto(script_cfg["urls"]["login"], wait_until="domcontentloaded")
         page.wait_for_timeout(timeouts["page_stabilize"])
@@ -538,7 +557,7 @@ def run(playwright: Playwright) -> None:
         click_selector(page, "#certCreditInfo", timeouts["action"])
 
         print("Test completed successfully!")
-    except Exception:
+    except Exception as exc:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         screenshot_name = f"{script_cfg['paths']['failure_screenshot_prefix']}_{timestamp}.png"
         screenshot_path = progress_dir / screenshot_name
@@ -546,10 +565,13 @@ def run(playwright: Playwright) -> None:
             page.screenshot(path=str(screenshot_path), full_page=True)
         except Exception:
             pass
-        raise
+        error = exc
     finally:
+        wait_for_manual_close(page, keep_open_after_run, keep_open_poll_ms)
         context.close()
         browser.close()
+    if error:
+        raise error
 
 
 with sync_playwright() as playwright:
