@@ -23,13 +23,13 @@ epost:
       permissions_origins:
         - "https://www.epost.go.kr"
         - "https://parcel.epost.go.kr"
-      keep_open_after_run: false
+      keep_open_after_run: true
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
       page_stabilize: 1000
-      login_wait: 1000
-      popup: 1000
+      login_wait: 10000
+      popup: 10000
       action: 1000
       keep_open_poll_ms: 1000
 
@@ -74,6 +74,8 @@ epost:
           index: 0
 
     next_button:
+      preferred_selectors:
+        - "#btnNext"
       selectors:
         - "a"
         - "button"
@@ -106,9 +108,12 @@ epost:
         - "찾기"
         - "주소검색"
       result_text_contains: "향군로74번길 26"
+      apartment_detail_radio_name: "상세주소(아파트)"
+      building_field_name: "동"
+      unit_field_name: "호"
       building: "103"
       unit: "912"
-      submit_text_contains: "입력"
+      submit_text_contains: "주소입력"
 
     sender:
       phone:

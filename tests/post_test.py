@@ -124,6 +124,11 @@ def click_selector(page, selector: str, timeout_ms: int | None = None) -> bool:
         """(sel) => {
             const el = document.querySelector(sel);
             if (!el) return false;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            if (typeof el.disabled !== 'undefined' && el.disabled) return false;
             el.click();
             return true;
         }""",
@@ -141,7 +146,14 @@ def click_link_by_text(
         """(payload) => {
             const root = payload.container ? document.querySelector(payload.container) : document;
             if (!root) return false;
-            const links = Array.from(root.querySelectorAll('a'));
+            const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+            const links = Array.from(root.querySelectorAll('a')).filter(isVisible);
             const target = links.find(link => (link.textContent || '').includes(payload.text));
             if (!target) return false;
             target.click();
@@ -243,9 +255,23 @@ def click_visible_element_by_text(
     return clicked
 
 
+def click_cell_by_text(page, text: str, timeout_ms: int | None = None) -> bool:
+    try:
+        page.get_by_role("cell", name=text, exact=True).first.click(timeout=timeout_ms)
+        step_delay(page, timeout_ms)
+        return True
+    except PlaywrightError:
+        pass
+    return click_visible_element_by_text(page, ["td", "a", "button", "[role='cell']"], [text], timeout_ms)
+
+
 def click_next_button(page, config: dict, timeout_ms: int | None = None) -> None:
     process_cfg = config["epost"]["working_process"]
     next_cfg = process_cfg["next_button"]
+    preferred_selectors = next_cfg.get("preferred_selectors", [])
+    for selector in preferred_selectors:
+        if click_selector(page, selector, timeout_ms):
+            return
     clicked = click_visible_element_by_text(page, next_cfg["selectors"], next_cfg["text_contains"], timeout_ms)
     if not clicked:
         raise RuntimeError("다음 버튼을 찾지 못했습니다.")
@@ -454,22 +480,59 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
     if not found:
         raise RuntimeError("주소 검색 결과를 찾지 못했습니다.")
 
-    page.evaluate(
-        """(payload) => {
-            const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-            for (const input of inputs) {
-                if (input.placeholder && input.placeholder.includes('동')) {
-                    input.value = payload.building;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                } else if (input.placeholder && input.placeholder.includes('호')) {
-                    input.value = payload.unit;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-            }
-        }""",
-        {"building": popup_cfg["building"], "unit": popup_cfg["unit"]},
-    )
-    step_delay(page, timeout_ms)
+    building = popup_cfg.get("building")
+    unit = popup_cfg.get("unit")
+    if building and unit:
+        apartment_radio_name = popup_cfg.get("apartment_detail_radio_name")
+        if apartment_radio_name:
+            try:
+                page.get_by_role("radio", name=apartment_radio_name, exact=True).check(timeout=timeout_ms)
+            except PlaywrightError:
+                pass
+            step_delay(page, timeout_ms)
+
+        building_field_name = popup_cfg.get("building_field_name", "동")
+        unit_field_name = popup_cfg.get("unit_field_name", "호")
+        filled = False
+        try:
+            page.get_by_role("textbox", name=building_field_name, exact=True).fill(building, timeout=timeout_ms)
+            page.get_by_role("textbox", name=unit_field_name, exact=True).fill(unit, timeout=timeout_ms)
+            filled = True
+        except PlaywrightError:
+            filled = False
+        if not filled:
+            page.evaluate(
+                """(payload) => {
+                    const setValue = (token, value) => {
+                        const candidates = Array.from(document.querySelectorAll('input[type=\"text\"], input[type=\"tel\"], textarea'));
+                        const matchesToken = (el) => {
+                            const attrs = [
+                                el.getAttribute('aria-label') || '',
+                                el.getAttribute('title') || '',
+                                el.getAttribute('name') || '',
+                                el.getAttribute('id') || '',
+                                el.getAttribute('placeholder') || '',
+                            ];
+                            return attrs.some((attr) => attr.includes(token));
+                        };
+                        const el = candidates.find(matchesToken);
+                        if (!el) return false;
+                        el.value = value;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    };
+                    setValue(payload.buildingToken, payload.building);
+                    setValue(payload.unitToken, payload.unit);
+                }""",
+                {
+                    "buildingToken": building_field_name,
+                    "unitToken": unit_field_name,
+                    "building": building,
+                    "unit": unit,
+                },
+            )
+        step_delay(page, timeout_ms)
 
     clicked = page.evaluate(
         """(text) => {
@@ -507,18 +570,19 @@ def open_item_info_popup(page, config: dict, timeout_ms: int):
     process_cfg = epost_cfg["working_process"]
     item_info_cfg = process_cfg["item_info"]
     popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
+    trigger_text = item_info_cfg["popup_trigger_text"]
+    if page.get_by_text(trigger_text).count() == 0:
+        raise RuntimeError("물품정보 불러오기 트리거를 찾지 못했습니다.")
     try:
         with page.expect_popup(timeout=popup_timeout_ms) as popup_info:
-            clicked = click_link_by_text(page, item_info_cfg["popup_trigger_text"], timeout_ms=timeout_ms)
-        if not clicked:
-            raise RuntimeError("물품정보 불러오기 링크를 찾지 못했습니다.")
+            page.get_by_text(trigger_text).first.click(timeout=timeout_ms)
         return popup_info.value
     except PlaywrightTimeoutError as exc:
         raise RuntimeError("물품정보 팝업이 열리지 않았습니다.") from exc
 
 
 def select_item_in_popup(page, item_text: str, timeout_ms: int | None = None) -> None:
-    clicked = click_link_by_text(page, item_text, timeout_ms=timeout_ms)
+    clicked = click_cell_by_text(page, item_text, timeout_ms=timeout_ms)
     if not clicked:
         raise RuntimeError("물품정보 팝업에서 품목을 찾지 못했습니다.")
     step_delay(page, timeout_ms)
@@ -577,9 +641,13 @@ def fill_sender_section(page, config: dict, timeouts: dict) -> None:
     process_cfg = config["epost"]["working_process"]
     sender_cfg = process_cfg["sender"]
     page2 = open_address_popup(page, config, timeouts["action"])
+    attach_dialog_handler(page2, config["epost"]["script"]["login"]["accept_dialog_contains"])
     fill_address_popup(page2, config, timeouts["action"])
     step_delay(page2, timeouts["action"])
-    page2.close()
+    try:
+        page2.close()
+    except PlaywrightError:
+        pass
     set_input_value(
         page,
         sender_cfg["phone_selectors"]["middle"],
@@ -737,7 +805,7 @@ def run(playwright: Playwright) -> None:
         if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
             page4.close()
             raise RuntimeError("주소록이 비어 있습니다.")
-        if not click_link_by_text(page4, recipient_cfg["name"], timeout_ms=timeouts["action"]):
+        if not click_cell_by_text(page4, recipient_cfg["name"], timeout_ms=timeouts["action"]):
             page4.close()
             raise RuntimeError("주소록에서 수취인을 찾지 못했습니다.")
         step_delay(page4, timeouts["action"])
