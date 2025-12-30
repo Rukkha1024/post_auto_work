@@ -674,86 +674,6 @@ def open_address_book_popup(page, config: dict, timeout_ms: int):
         raise RuntimeError("주소록 팝업이 열리지 않았습니다.") from exc
 
 
-def open_item_info_popup(page, config: dict, timeout_ms: int):
-    epost_cfg = config["epost"]
-    process_cfg = epost_cfg["working_process"]
-    item_info_cfg = process_cfg["item_info"]
-    sections_cfg = process_cfg.get("sections", {})
-    item_heading = sections_cfg.get("item_info", {}).get("heading_text_contains")
-    if item_heading:
-        ensure_section_open(page, item_heading, timeout_ms)
-    popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
-    trigger_text = item_info_cfg["popup_trigger_text"]
-    if page.get_by_text(trigger_text).count() == 0:
-        raise RuntimeError("물품정보 불러오기 트리거를 찾지 못했습니다.")
-    try:
-        with page.expect_popup(timeout=popup_timeout_ms) as popup_info:
-            page.get_by_text(trigger_text).first.click(timeout=timeout_ms)
-        return popup_info.value
-    except PlaywrightTimeoutError as exc:
-        raise RuntimeError("물품정보 팝업이 열리지 않았습니다.") from exc
-
-
-def select_item_in_popup(page, item_text: str, timeout_ms: int | None = None) -> None:
-    try:
-        result = page.evaluate(
-            """(token) => {
-                const normalize = (s) => (s || '').replace(/\\s+/g, ' ').trim();
-                const safeText = (el) => normalize(el?.textContent || '');
-                const safeAttr = (el, name) => normalize(el?.getAttribute(name) || '');
-                const isVisible = (el) => {
-                    if (!el) return false;
-                    const style = window.getComputedStyle(el);
-                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-                    const rect = el.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0;
-                };
-
-                const links = Array.from(document.querySelectorAll('a')).filter(isVisible);
-                const target = links.find((a) => {
-                    const text = safeText(a);
-                    const title = safeAttr(a, 'title');
-                    return text.includes(token) || title.includes(token);
-                });
-                if (!target) return { found: false };
-
-                const onclick = (target.getAttribute('onclick') || '').toString();
-                const match = onclick.match(/setValue\\(['\\\"]([^'\\\"]+)['\\\"]\\)/);
-                if (match && typeof window.setValue === 'function') {
-                    const regseq = match[1];
-                    setTimeout(() => {
-                        try {
-                            window.setValue(regseq);
-                        } catch (e) {}
-                    }, 0);
-                    return { found: true, applied: true, method: 'setValue', regseq };
-                }
-
-                target.click();
-                return { found: true, applied: true, method: 'click' };
-            }""",
-            item_text,
-        )
-    except PlaywrightError:
-        return
-
-    if not result or not result.get("found"):
-        raise RuntimeError("물품정보 팝업에서 품목을 찾지 못했습니다.")
-
-    step_delay(page, timeout_ms)
-    try:
-        page.wait_for_event("close", timeout=timeout_ms or 2000)
-        return
-    except PlaywrightTimeoutError:
-        pass
-    try:
-        if hasattr(page, "is_closed") and page.is_closed():
-            return
-        page.close()
-    except PlaywrightError:
-        pass
-
-
 def fill_item_info_fields(page, config: dict, timeout_ms: int | None = None) -> None:
     process_cfg = config["epost"]["working_process"]
     parcel_cfg = process_cfg["parcel"]
@@ -810,15 +730,6 @@ def handle_item_info_step_04(page, config: dict, timeouts: dict) -> None:
     if item_heading:
         ensure_section_open(page, item_heading, timeouts["action"])
 
-    item_info_cfg = process_cfg["item_info"]
-    page_item = open_item_info_popup(page, config, timeouts["action"])
-    page_item.once("dialog", dismiss_dialog_safely)
-
-    select_item_in_popup(page_item, item_info_cfg["item_selection_text"], timeouts["popup"])
-    step_delay(page, timeouts["action"])
-
-    if item_heading:
-        ensure_section_open(page, item_heading, timeouts["action"])
     fill_item_info_fields(page, config, timeouts["action"])
     fill_delivery_note(page, config, timeouts["action"])
     add_to_recipient_list(page, config, timeouts["action"])
