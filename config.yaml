@@ -95,6 +95,16 @@ epost:
         - "주소록이 없습니다"
         - "등록된 주소록이 없습니다"
 
+    item_info:
+      popup_trigger_text: "물품정보 불러오기"
+      item_selection_text: "전자제품"
+
+    recipient_list:
+      add_button_text: "받는 분 목록에 추가"
+
+    address_validation:
+      button_text: "주소검증"
+
     # 수취인 정보
     recipient:
       use_address_book: true

@@ -381,6 +381,50 @@ def open_address_book_popup(page, config: dict, timeout_ms: int):
         raise RuntimeError("주소록 팝업이 열리지 않았습니다.") from exc
 
 
+def open_item_info_popup(page, config: dict, timeout_ms: int):
+    epost_cfg = config["epost"]
+    process_cfg = epost_cfg["working_process"]
+    item_info_cfg = process_cfg["item_info"]
+    popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
+    try:
+        with page.expect_popup(timeout=popup_timeout_ms) as popup_info:
+            clicked = click_link_by_text(page, item_info_cfg["popup_trigger_text"], timeout_ms=timeout_ms)
+        if not clicked:
+            raise RuntimeError("물품정보 불러오기 링크를 찾지 못했습니다.")
+        return popup_info.value
+    except PlaywrightTimeoutError as exc:
+        raise RuntimeError("물품정보 팝업이 열리지 않았습니다.") from exc
+
+
+def select_item_in_popup(page, item_text: str, timeout_ms: int | None = None) -> None:
+    clicked = click_link_by_text(page, item_text, timeout_ms=timeout_ms)
+    if not clicked:
+        raise RuntimeError("물품정보 팝업에서 품목을 찾지 못했습니다.")
+    step_delay(page, timeout_ms)
+    try:
+        if hasattr(page, "is_closed") and page.is_closed():
+            return
+        page.close()
+    except PlaywrightError:
+        pass
+
+
+def add_to_recipient_list(page, config: dict, timeout_ms: int | None = None) -> None:
+    process_cfg = config["epost"]["working_process"]
+    recipient_list_cfg = process_cfg["recipient_list"]
+    clicked = click_link_by_text(page, recipient_list_cfg["add_button_text"], timeout_ms=timeout_ms)
+    if not clicked:
+        raise RuntimeError("받는 분 목록에 추가 링크를 찾지 못했습니다.")
+
+
+def validate_address(page, config: dict, timeout_ms: int | None = None) -> None:
+    process_cfg = config["epost"]["working_process"]
+    validation_cfg = process_cfg["address_validation"]
+    clicked = click_link_by_text(page, validation_cfg["button_text"], timeout_ms=timeout_ms)
+    if not clicked:
+        raise RuntimeError("주소검증 링크를 찾지 못했습니다.")
+
+
 def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
     if not empty_tokens:
         return False
@@ -533,6 +577,17 @@ def run(playwright: Playwright) -> None:
                 page4.close()
         if manual_entry_required:
             fill_manual_recipient(page, config, timeouts)
+
+        item_info_cfg = process_cfg["item_info"]
+        page_item = open_item_info_popup(page, config, timeouts["action"])
+        page_item.once("dialog", lambda dialog: dialog.dismiss())
+        select_item_in_popup(page_item, item_info_cfg["item_selection_text"], timeouts["action"])
+
+        page.once("dialog", lambda dialog: dialog.dismiss())
+        add_to_recipient_list(page, config, timeouts["action"])
+
+        page.once("dialog", lambda dialog: dialog.dismiss())
+        validate_address(page, config, timeouts["action"])
 
         click_selector(page, "#imgBtn", timeouts["action"])
         click_selector(page, "#btnAddr", timeouts["action"])
