@@ -23,7 +23,7 @@ epost:
       permissions_origins:
         - "https://www.epost.go.kr"
         - "https://parcel.epost.go.kr"
-      keep_open_after_run: true
+      keep_open_after_run: false
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
@@ -62,6 +62,13 @@ epost:
 
   # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
+    sections:
+      recipient:
+        heading_text_contains: "03 받는 분"
+      item_info:
+        heading_text_contains: "04 물품정보"
+      recipient_list:
+        heading_text_contains: "05 받는 분 목록"
     navigation:
       menu_steps:
         - text: "국내소포"

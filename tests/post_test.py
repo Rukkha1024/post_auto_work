@@ -212,7 +212,11 @@ def click_link_by_text_index(
 
 
 def click_visible_element_by_text(
-    page, selectors: list[str], text_tokens: list[str], timeout_ms: int | None = None
+    page,
+    selectors: list[str],
+    text_tokens: list[str],
+    timeout_ms: int | None = None,
+    prefer_last: bool = False,
 ) -> bool:
     if not selectors:
         return False
@@ -236,19 +240,35 @@ def click_visible_element_by_text(
                     token => text.includes(token) || aria.includes(token) || title.includes(token) || imgAlt.includes(token)
                 );
             };
+            const matches = [];
             for (const selector of payload.selectors || []) {
                 const elements = Array.from(document.querySelectorAll(selector));
                 for (const el of elements) {
                     if (el.disabled) continue;
                     if (!isVisible(el)) continue;
                     if (!matchesText(el)) continue;
-                    el.click();
-                    return true;
+                    matches.push(el);
                 }
             }
-            return false;
+            if (!matches.length) return false;
+
+            const preferLast = !!payload.prefer_last;
+            let target = matches[0];
+            if (preferLast) {
+                target = matches
+                    .map((el) => ({ el, top: el.getBoundingClientRect().top }))
+                    .sort((a, b) => a.top - b.top)
+                    .map((row) => row.el)
+                    .pop();
+            }
+
+            try {
+                target.scrollIntoView({ block: 'center', inline: 'center' });
+            } catch (e) {}
+            target.click();
+            return true;
         }""",
-        {"selectors": selectors, "text_tokens": text_tokens or []},
+        {"selectors": selectors, "text_tokens": text_tokens or [], "prefer_last": prefer_last},
     )
     if clicked:
         step_delay(page, timeout_ms)
@@ -272,9 +292,39 @@ def click_next_button(page, config: dict, timeout_ms: int | None = None) -> None
     for selector in preferred_selectors:
         if click_selector(page, selector, timeout_ms):
             return
-    clicked = click_visible_element_by_text(page, next_cfg["selectors"], next_cfg["text_contains"], timeout_ms)
+    clicked = click_visible_element_by_text(
+        page,
+        next_cfg["selectors"],
+        next_cfg["text_contains"],
+        timeout_ms,
+        prefer_last=True,
+    )
     if not clicked:
         raise RuntimeError("다음 버튼을 찾지 못했습니다.")
+
+
+def ensure_section_open(page, heading_text_contains: str, timeout_ms: int | None = None) -> bool:
+    if not heading_text_contains:
+        return False
+    opened = page.evaluate(
+        """(payload) => {
+            const normalize = (text) => (text || '').replace(/\\s+/g, ' ').trim();
+            const token = payload.token;
+            const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'));
+            const target = headings.find((h) => normalize(h.textContent).includes(token));
+            if (!target) return false;
+            const hasOn = target.classList && target.classList.contains('on');
+            if (!hasOn) {
+                target.scrollIntoView({ block: 'center', inline: 'center' });
+                target.click();
+            }
+            return true;
+        }""",
+        {"token": heading_text_contains},
+    )
+    if opened:
+        step_delay(page, timeout_ms)
+    return opened
 
 
 def remove_modal_and_login(page, config: dict, timeout_ms: int | None = None) -> dict:
@@ -553,6 +603,10 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
 def open_address_book_popup(page, config: dict, timeout_ms: int):
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
+    sections_cfg = process_cfg.get("sections", {})
+    recipient_heading = sections_cfg.get("recipient", {}).get("heading_text_contains")
+    if recipient_heading:
+        ensure_section_open(page, recipient_heading, timeout_ms)
     address_book_cfg = process_cfg["address_book"]
     popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
     try:
@@ -569,6 +623,10 @@ def open_item_info_popup(page, config: dict, timeout_ms: int):
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
     item_info_cfg = process_cfg["item_info"]
+    sections_cfg = process_cfg.get("sections", {})
+    item_heading = sections_cfg.get("item_info", {}).get("heading_text_contains")
+    if item_heading:
+        ensure_section_open(page, item_heading, timeout_ms)
     popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
     trigger_text = item_info_cfg["popup_trigger_text"]
     if page.get_by_text(trigger_text).count() == 0:
@@ -611,6 +669,10 @@ def fill_delivery_note(page, config: dict, timeout_ms: int | None = None) -> Non
 
 def add_to_recipient_list(page, config: dict, timeout_ms: int | None = None) -> None:
     process_cfg = config["epost"]["working_process"]
+    sections_cfg = process_cfg.get("sections", {})
+    item_heading = sections_cfg.get("item_info", {}).get("heading_text_contains")
+    if item_heading:
+        ensure_section_open(page, item_heading, timeout_ms)
     recipient_list_cfg = process_cfg["recipient_list"]
     clicked = click_link_by_text(page, recipient_list_cfg["add_button_text"], timeout_ms=timeout_ms)
     if not clicked:
@@ -619,6 +681,10 @@ def add_to_recipient_list(page, config: dict, timeout_ms: int | None = None) -> 
 
 def validate_address(page, config: dict, timeout_ms: int | None = None) -> None:
     process_cfg = config["epost"]["working_process"]
+    sections_cfg = process_cfg.get("sections", {})
+    recipient_list_heading = sections_cfg.get("recipient_list", {}).get("heading_text_contains")
+    if recipient_list_heading:
+        ensure_section_open(page, recipient_list_heading, timeout_ms)
     validation_cfg = process_cfg["address_validation"]
     clicked = click_link_by_text(page, validation_cfg["button_text"], timeout_ms=timeout_ms)
     if not clicked:
