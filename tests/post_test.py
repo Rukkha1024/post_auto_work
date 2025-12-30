@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import yaml
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Playwright, sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
@@ -23,7 +24,12 @@ def ensure_progress_dir(path: Path) -> None:
 
 def step_delay(page, timeout_ms: int | None) -> None:
     if timeout_ms and timeout_ms > 0:
-        page.wait_for_timeout(timeout_ms)
+        if hasattr(page, "is_closed") and page.is_closed():
+            return
+        try:
+            page.wait_for_timeout(timeout_ms)
+        except PlaywrightError:
+            pass
 
 
 def set_input_value(page, selector: str, value: str, timeout_ms: int | None = None) -> bool:
