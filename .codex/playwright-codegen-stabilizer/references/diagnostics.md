@@ -2,6 +2,11 @@
 
 The fastest way to reduce future edits is to make every failure produce enough evidence to fix without guesswork.
 
+## Also Capture on Success (Checkpoints)
+
+Capture a small set of “result screenshots” at verification checkpoints and use them to decide pass/fail.
+See `references/visual-validation.md`.
+
 ## Always Capture on Failure
 
 On exception, save:

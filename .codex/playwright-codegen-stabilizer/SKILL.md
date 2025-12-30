@@ -56,7 +56,12 @@ Convert codegen output into “production automation”: resilient locators, cen
 - Use MCP to inspect the DOM at the failure point, confirm locator uniqueness, and verify the new locator works interactively.
 - If MCP is unavailable, fall back to `page.pause()` + trace viewer.
 
-7) Regression-proof
+7) Visual validation (required)
+- After changes, run the flow and capture **result screenshots** at the defined verification checkpoints.
+- Decide pass/fail **only by the actual web UI state** shown in the screenshots (or in the live browser when reproducing).
+- Never declare success based on console output/log lines (e.g., “completed successfully”) alone.
+
+8) Regression-proof
 - Run the script multiple times (at least 2–3) to confirm flakiness is gone.
 - If the flow is critical, add a narrow regression test for the fixed step (or a smoke test) with artifacts enabled.
 
@@ -77,3 +82,4 @@ Use YAML/JSON/TOML—whatever the repo already prefers. Keep the script logic st
 - `references/locator-strategy.md` (locator hierarchy + duplicate text strategy)
 - `references/diagnostics.md` (trace/screenshot/html/a11y artifact pattern)
 - `references/popups-and-dialogs.md` (popup, dialog, and overlay patterns)
+- `references/visual-validation.md` (result screenshots + UI-only pass/fail rule)
