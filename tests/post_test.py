@@ -918,9 +918,17 @@ def run(playwright: Playwright) -> None:
             if hasattr(page4, "is_closed") and page4.is_closed():
                 break
             if attempt == 0:
-                clicked = click_cell_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
+                try:
+                    page4.get_by_role("link", name=recipient_name, exact=True).first.click(timeout=timeouts["popup"])
+                    clicked = True
+                except PlaywrightError:
+                    clicked = False
             elif attempt == 1:
-                clicked = click_link_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
+                try:
+                    page4.locator("a", has_text=recipient_name).first.click(timeout=timeouts["popup"])
+                    clicked = True
+                except PlaywrightError:
+                    clicked = False
             else:
                 try:
                     clicked = bool(
@@ -952,7 +960,7 @@ def run(playwright: Playwright) -> None:
             step_delay(page4, timeouts["action"])
             applied = _wait_receiver_applied(
                 receiver_check_arg,
-                min(timeouts["popup"], 5000) if attempt == 0 else timeouts["popup"],
+                timeouts["popup"],
             )
             if applied:
                 break
