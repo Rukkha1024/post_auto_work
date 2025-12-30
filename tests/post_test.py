@@ -48,6 +48,13 @@ def wait_for_manual_close(page, keep_open: bool, poll_ms: int) -> None:
         pass
 
 
+def dismiss_dialog_safely(dialog) -> None:
+    try:
+        dialog.dismiss()
+    except PlaywrightError:
+        pass
+
+
 def set_input_value(page, selector: str, value: str, timeout_ms: int | None = None) -> bool:
     if value is None:
         return False
@@ -878,7 +885,7 @@ def run(playwright: Playwright) -> None:
         page4 = open_address_book_popup(page, config, timeouts["action"])
         page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
         step_delay(page4, timeouts["action"])
-        page4.once("dialog", lambda dialog: dialog.dismiss())
+        page4.on("dialog", dismiss_dialog_safely)
         if not click_link_by_text(page4, address_book_cfg["confirm_text"], timeout_ms=timeouts["action"]):
             page4.close()
             raise RuntimeError("주소록 확인 링크를 찾지 못했습니다.")
@@ -888,7 +895,6 @@ def run(playwright: Playwright) -> None:
             page4.close()
             raise RuntimeError("주소록이 비어 있습니다.")
         recipient_name = recipient_cfg["name"]
-        page4.once("dialog", lambda dialog: dialog.dismiss())
         clicked = click_link_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
         if not clicked:
             clicked = click_cell_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
@@ -909,7 +915,7 @@ def run(playwright: Playwright) -> None:
                     const v = (el.value || '').toString();
                     return v.includes(payload.token);
                 }""",
-                {"selector": 'input[name="receiverName"]', "token": recipient_name},
+                arg={"selector": 'input[name="receiverName"]', "token": recipient_name},
                 timeout=timeouts["popup"],
             )
         except PlaywrightTimeoutError:
