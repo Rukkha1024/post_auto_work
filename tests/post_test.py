@@ -55,6 +55,16 @@ def dismiss_dialog_safely(dialog) -> None:
         pass
 
 
+def accept_dialog_safely(dialog) -> None:
+    try:
+        dialog.accept()
+    except PlaywrightError:
+        try:
+            dialog.dismiss()
+        except PlaywrightError:
+            pass
+
+
 def set_input_value(page, selector: str, value: str, timeout_ms: int | None = None) -> bool:
     if value is None:
         return False
@@ -885,7 +895,7 @@ def run(playwright: Playwright) -> None:
         page4 = open_address_book_popup(page, config, timeouts["action"])
         page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
         step_delay(page4, timeouts["action"])
-        page4.on("dialog", dismiss_dialog_safely)
+        page4.on("dialog", accept_dialog_safely)
         if not click_link_by_text(page4, address_book_cfg["confirm_text"], timeout_ms=timeouts["action"]):
             page4.close()
             raise RuntimeError("주소록 확인 링크를 찾지 못했습니다.")
