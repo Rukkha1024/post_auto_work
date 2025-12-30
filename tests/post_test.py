@@ -21,10 +21,15 @@ def ensure_progress_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def set_input_value(page, selector: str, value: str) -> bool:
+def step_delay(page, timeout_ms: int | None) -> None:
+    if timeout_ms and timeout_ms > 0:
+        page.wait_for_timeout(timeout_ms)
+
+
+def set_input_value(page, selector: str, value: str, timeout_ms: int | None = None) -> bool:
     if value is None:
         return False
-    return page.evaluate(
+    updated = page.evaluate(
         """(payload) => {
             const el = document.querySelector(payload.selector);
             if (!el) return false;
@@ -35,12 +40,15 @@ def set_input_value(page, selector: str, value: str) -> bool:
         }""",
         {"selector": selector, "value": value},
     )
+    if updated:
+        step_delay(page, timeout_ms)
+    return updated
 
 
-def set_select_value(page, selector: str, value: str) -> bool:
+def set_select_value(page, selector: str, value: str, timeout_ms: int | None = None) -> bool:
     if value is None:
         return False
-    return page.evaluate(
+    updated = page.evaluate(
         """(payload) => {
             const el = document.querySelector(payload.selector);
             if (!el) return false;
@@ -50,10 +58,13 @@ def set_select_value(page, selector: str, value: str) -> bool:
         }""",
         {"selector": selector, "value": value},
     )
+    if updated:
+        step_delay(page, timeout_ms)
+    return updated
 
 
-def click_selector(page, selector: str) -> bool:
-    return page.evaluate(
+def click_selector(page, selector: str, timeout_ms: int | None = None) -> bool:
+    clicked = page.evaluate(
         """(sel) => {
             const el = document.querySelector(sel);
             if (!el) return false;
@@ -62,10 +73,15 @@ def click_selector(page, selector: str) -> bool:
         }""",
         selector,
     )
+    if clicked:
+        step_delay(page, timeout_ms)
+    return clicked
 
 
-def click_link_by_text(page, text: str, container_selector: str | None = None) -> bool:
-    return page.evaluate(
+def click_link_by_text(
+    page, text: str, container_selector: str | None = None, timeout_ms: int | None = None
+) -> bool:
+    clicked = page.evaluate(
         """(payload) => {
             const root = payload.container ? document.querySelector(payload.container) : document;
             if (!root) return false;
@@ -77,12 +93,17 @@ def click_link_by_text(page, text: str, container_selector: str | None = None) -
         }""",
         {"text": text, "container": container_selector},
     )
+    if clicked:
+        step_delay(page, timeout_ms)
+    return clicked
 
 
-def click_visible_element_by_text(page, selectors: list[str], text_tokens: list[str]) -> bool:
+def click_visible_element_by_text(
+    page, selectors: list[str], text_tokens: list[str], timeout_ms: int | None = None
+) -> bool:
     if not selectors:
         return False
-    return page.evaluate(
+    clicked = page.evaluate(
         """(payload) => {
             const isVisible = (el) => {
                 if (!el) return false;
@@ -111,9 +132,12 @@ def click_visible_element_by_text(page, selectors: list[str], text_tokens: list[
         }""",
         {"selectors": selectors, "text_tokens": text_tokens or []},
     )
+    if clicked:
+        step_delay(page, timeout_ms)
+    return clicked
 
 
-def remove_modal_and_login(page, config: dict) -> dict:
+def remove_modal_and_login(page, config: dict, timeout_ms: int | None = None) -> dict:
     epost_cfg = config["epost"]
     script_cfg = epost_cfg["script"]
     # 로그인 단계에서만 사용하는 설정(Working process 이전)
@@ -126,7 +150,7 @@ def remove_modal_and_login(page, config: dict) -> dict:
         "username": creds["username"],
         "password": creds["password"],
     }
-    return page.evaluate(
+    result = page.evaluate(
         """(payload) => {
             const modal = document.querySelector(payload.modal_selector);
             if (modal) {
@@ -174,6 +198,8 @@ def remove_modal_and_login(page, config: dict) -> dict:
         }""",
         payload,
     )
+    step_delay(page, timeout_ms)
+    return result
 
 
 def attach_dialog_handler(page, accept_contains: list[str]) -> None:
@@ -199,7 +225,7 @@ def attach_popup_closer(context, url_contains: list[str], timeout_ms: int) -> No
     context.on("page", _handler)
 
 
-def toggle_address_popup_trigger(page, config: dict, click: bool) -> bool:
+def toggle_address_popup_trigger(page, config: dict, click: bool, timeout_ms: int | None = None) -> bool:
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
     popup_cfg = process_cfg["address_popup"]
@@ -208,7 +234,7 @@ def toggle_address_popup_trigger(page, config: dict, click: bool) -> bool:
         "onclick_contains": popup_cfg["trigger_onclick_contains"],
         "text_contains": popup_cfg["trigger_text_contains"],
     }
-    return page.evaluate(
+    clicked = page.evaluate(
         """(payload) => {
             const findLink = () => {
                 if (payload.onclick_contains) {
@@ -233,15 +259,20 @@ def toggle_address_popup_trigger(page, config: dict, click: bool) -> bool:
         }""",
         payload,
     )
+    if clicked and click:
+        step_delay(page, timeout_ms)
+    return clicked
 
 
 def open_address_popup(page, config: dict, timeout_ms: int):
+    script_cfg = config["epost"]["script"]
+    popup_timeout_ms = script_cfg["timeouts_ms"]["popup"]
     if not toggle_address_popup_trigger(page, config, False):
         raise RuntimeError("주소찾기 링크를 찾지 못했습니다.")
 
     try:
-        with page.expect_popup(timeout=timeout_ms) as popup_info:
-            toggle_address_popup_trigger(page, config, True)
+        with page.expect_popup(timeout=popup_timeout_ms) as popup_info:
+            toggle_address_popup_trigger(page, config, True, timeout_ms)
         return popup_info.value
     except PlaywrightTimeoutError as exc:
         raise RuntimeError("주소찾기 팝업이 열리지 않았습니다.") from exc
@@ -253,13 +284,16 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
     popup_cfg = process_cfg["address_popup"]
     keyword_selector = popup_cfg["keyword_selector"]
     page.locator(keyword_selector).fill(popup_cfg["keyword"])
+    step_delay(page, timeout_ms)
     clicked = click_visible_element_by_text(
         page,
         popup_cfg.get("search_button_selectors", []),
         popup_cfg.get("search_button_text_contains", []),
+        timeout_ms,
     )
     if not clicked:
         page.locator(keyword_selector).press("Enter")
+        step_delay(page, timeout_ms)
     page.wait_for_timeout(timeout_ms)
 
     found = page.evaluate(
@@ -272,6 +306,8 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
         }""",
         popup_cfg["result_text_contains"],
     )
+    if found:
+        step_delay(page, timeout_ms)
     if not found:
         raise RuntimeError("주소 검색 결과를 찾지 못했습니다.")
 
@@ -290,6 +326,7 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
         }""",
         {"building": popup_cfg["building"], "unit": popup_cfg["unit"]},
     )
+    step_delay(page, timeout_ms)
 
     clicked = page.evaluate(
         """(text) => {
@@ -301,6 +338,8 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
         }""",
         popup_cfg["submit_text_contains"],
     )
+    if clicked:
+        step_delay(page, timeout_ms)
     if not clicked:
         raise RuntimeError("주소 팝업 입력 버튼을 찾지 못했습니다.")
 
@@ -309,9 +348,10 @@ def open_address_book_popup(page, config: dict, timeout_ms: int):
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
     address_book_cfg = process_cfg["address_book"]
+    popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
     try:
-        with page.expect_popup(timeout=timeout_ms) as popup_info:
-            clicked = click_link_by_text(page, address_book_cfg["search_text"])
+        with page.expect_popup(timeout=popup_timeout_ms) as popup_info:
+            clicked = click_link_by_text(page, address_book_cfg["search_text"], timeout_ms=timeout_ms)
         if not clicked:
             raise RuntimeError("주소록 검색 링크를 찾지 못했습니다.")
         return popup_info.value
@@ -335,15 +375,16 @@ def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
     recipient_cfg = process_cfg["recipient"]
-    set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"])
-    page2 = open_address_popup(page, config, timeouts["popup"])
+    set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"], timeouts["action"])
+    page2 = open_address_popup(page, config, timeouts["action"])
     fill_address_popup(page2, config, timeouts["action"])
+    step_delay(page2, timeouts["action"])
     page2.close()
-    set_input_value(page, 'input[name="reDetailAddr"]', recipient_cfg["detail_address"])
+    set_input_value(page, 'input[name="reDetailAddr"]', recipient_cfg["detail_address"], timeouts["action"])
     phone_parts = recipient_cfg["phone"]["mobile"]
-    set_input_value(page, "#reCell1", phone_parts[0])
-    set_input_value(page, "#reCell2", phone_parts[1])
-    set_input_value(page, "#reCell3", phone_parts[2])
+    set_input_value(page, "#reCell1", phone_parts[0], timeouts["action"])
+    set_input_value(page, "#reCell2", phone_parts[1], timeouts["action"])
+    set_input_value(page, "#reCell3", phone_parts[2], timeouts["action"])
 
 
 def run(playwright: Playwright) -> None:
@@ -369,7 +410,7 @@ def run(playwright: Playwright) -> None:
         page.goto(script_cfg["urls"]["login"], wait_until="domcontentloaded")
         page.wait_for_timeout(timeouts["page_stabilize"])
 
-        login_result = remove_modal_and_login(page, config)
+        login_result = remove_modal_and_login(page, config, timeouts["action"])
         if not login_result["id_found"] or not login_result["pw_found"]:
             raise RuntimeError("로그인 입력창을 찾지 못했습니다.")
         if not login_result["submitted"]:
@@ -379,6 +420,7 @@ def run(playwright: Playwright) -> None:
             page.wait_for_url("**/main.retrieveMainPage.comm", timeout=timeouts["login_wait"])
         except PlaywrightTimeoutError as exc:
             raise RuntimeError("로그인 완료 페이지로 이동하지 못했습니다.") from exc
+        step_delay(page, timeouts["action"])
 
         page.goto(script_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
         page.wait_for_timeout(timeouts["page_stabilize"])
@@ -404,35 +446,57 @@ def run(playwright: Playwright) -> None:
             }""",
             agree_text,
         )
+        if checked:
+            step_delay(page, timeouts["action"])
         if not checked:
             raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
 
-        if not set_select_value(page, 'select[name="wishReceiptTime"]', process_cfg["parcel"]["wish_receipt_date"]):
+        if not set_select_value(
+            page,
+            'select[name="wishReceiptTime"]',
+            process_cfg["parcel"]["wish_receipt_date"],
+            timeouts["action"],
+        ):
             raise RuntimeError("방문일 선택 필드를 찾지 못했습니다.")
-        if not set_select_value(page, 'select[name="wishReceiptTimeNm"]', process_cfg["parcel"]["wish_receipt_time"]):
+        if not set_select_value(
+            page,
+            'select[name="wishReceiptTimeNm"]',
+            process_cfg["parcel"]["wish_receipt_time"],
+            timeouts["action"],
+        ):
             raise RuntimeError("방문시간 선택 필드를 찾지 못했습니다.")
-        if not set_select_value(page, 'select[name="pickupKeep"]', process_cfg["parcel"]["pickup_keep_code"]):
+        if not set_select_value(
+            page,
+            'select[name="pickupKeep"]',
+            process_cfg["parcel"]["pickup_keep_code"],
+            timeouts["action"],
+        ):
             raise RuntimeError("보관방법 선택 필드를 찾지 못했습니다.")
-        set_input_value(page, 'input[name="pickupKeepNm"]', process_cfg["parcel"]["pickup_keep_note"])
+        set_input_value(
+            page, 'input[name="pickupKeepNm"]', process_cfg["parcel"]["pickup_keep_note"], timeouts["action"]
+        )
 
-        set_select_value(page, "#tmpWght1", process_cfg["parcel"]["weight_code"])
-        set_select_value(page, "#tmpVol1", process_cfg["parcel"]["volume_code"])
-        set_select_value(page, "#labProductCode", process_cfg["parcel"]["product_code"])
+        set_select_value(page, "#tmpWght1", process_cfg["parcel"]["weight_code"], timeouts["action"])
+        set_select_value(page, "#tmpVol1", process_cfg["parcel"]["volume_code"], timeouts["action"])
+        set_select_value(page, "#labProductCode", process_cfg["parcel"]["product_code"], timeouts["action"])
 
-        click_selector(page, "#pickupSaveBtn")
-        click_link_by_text(page, "다음", "#pickupInfoDiv")
+        click_selector(page, "#pickupSaveBtn", timeouts["action"])
+        click_link_by_text(page, "다음", "#pickupInfoDiv", timeouts["action"])
 
         recipient_cfg = process_cfg["recipient"]
         manual_entry_required = not recipient_cfg["use_address_book"]
         if recipient_cfg["use_address_book"]:
             address_book_cfg = process_cfg["address_book"]
-            page4 = open_address_book_popup(page, config, timeouts["popup"])
+            page4 = open_address_book_popup(page, config, timeouts["action"])
             page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
+            step_delay(page4, timeouts["action"])
             page4.get_by_text(address_book_cfg["confirm_text"]).first.click()
+            step_delay(page4, timeouts["action"])
             page4.wait_for_load_state("domcontentloaded")
             page4.once("dialog", lambda dialog: dialog.dismiss())
             if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
                 manual_entry_required = True
+                step_delay(page4, timeouts["action"])
                 page4.close()
             else:
                 name_locator = page4.get_by_text(recipient_cfg["name"])
@@ -440,32 +504,32 @@ def run(playwright: Playwright) -> None:
                     manual_entry_required = True
                 else:
                     name_locator.first.click()
+                    step_delay(page4, timeouts["action"])
                 page4.close()
         if manual_entry_required:
             fill_manual_recipient(page, config, timeouts)
 
-        click_selector(page, "#imgBtn")
-        click_selector(page, "#btnAddr")
-        click_link_by_text(page, "다음", "#recListNextDiv")
+        click_selector(page, "#imgBtn", timeouts["action"])
+        click_selector(page, "#btnAddr", timeouts["action"])
+        click_link_by_text(page, "다음", "#recListNextDiv", timeouts["action"])
 
         card_cfg = process_cfg["payment"]
         card_numbers = card_cfg["card_numbers"]
-        set_input_value(page, "#creditNo1", card_numbers[0])
-        set_input_value(page, "#creditNo2", card_numbers[1])
-        set_input_value(page, "#creditNo3", card_numbers[2])
-        set_input_value(page, "#creditNo4", card_numbers[3])
+        set_input_value(page, "#creditNo1", card_numbers[0], timeouts["action"])
+        set_input_value(page, "#creditNo2", card_numbers[1], timeouts["action"])
+        set_input_value(page, "#creditNo3", card_numbers[2], timeouts["action"])
+        set_input_value(page, "#creditNo4", card_numbers[3], timeouts["action"])
 
         expiry = card_cfg["expiry"]
-        set_input_value(page, "#creditExp1", expiry[0])
-        set_input_value(page, "#creditExp2", expiry[1])
+        set_input_value(page, "#creditExp1", expiry[0], timeouts["action"])
+        set_input_value(page, "#creditExp2", expiry[1], timeouts["action"])
 
         pwd_digits = card_cfg["password_digits"]
-        set_input_value(page, "#creditPwd1", pwd_digits[0])
-        set_input_value(page, "#creditPwd2", pwd_digits[1])
-        set_input_value(page, "#creditBirth", card_cfg["birthdate"])
+        set_input_value(page, "#creditPwd1", pwd_digits[0], timeouts["action"])
+        set_input_value(page, "#creditPwd2", pwd_digits[1], timeouts["action"])
+        set_input_value(page, "#creditBirth", card_cfg["birthdate"], timeouts["action"])
 
-        click_selector(page, "#certCreditInfo")
-        page.wait_for_timeout(timeouts["action"])
+        click_selector(page, "#certCreditInfo", timeouts["action"])
 
         print("Test completed successfully!")
     except Exception:
