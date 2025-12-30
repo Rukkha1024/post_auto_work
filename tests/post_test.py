@@ -887,11 +887,33 @@ def run(playwright: Playwright) -> None:
         if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
             page4.close()
             raise RuntimeError("주소록이 비어 있습니다.")
-        if not click_cell_by_text(page4, recipient_cfg["name"], timeout_ms=timeouts["action"]):
+        recipient_name = recipient_cfg["name"]
+        page4.once("dialog", lambda dialog: dialog.dismiss())
+        clicked = click_link_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
+        if not clicked:
+            clicked = click_cell_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
+        if not clicked:
             page4.close()
             raise RuntimeError("주소록에서 수취인을 찾지 못했습니다.")
         step_delay(page4, timeouts["action"])
-        page4.close()
+        try:
+            page4.close()
+        except PlaywrightError:
+            pass
+
+        try:
+            page.wait_for_function(
+                """(payload) => {
+                    const el = document.querySelector(payload.selector);
+                    if (!el) return false;
+                    const v = (el.value || '').toString();
+                    return v.includes(payload.token);
+                }""",
+                {"selector": 'input[name="receiverName"]', "token": recipient_name},
+                timeout=timeouts["popup"],
+            )
+        except PlaywrightTimeoutError:
+            raise RuntimeError("받는 분 정보가 메인 페이지에 적용되지 않았습니다.")
 
         click_next_button(page, config, timeouts["action"])
 
