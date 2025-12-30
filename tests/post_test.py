@@ -895,31 +895,78 @@ def run(playwright: Playwright) -> None:
             page4.close()
             raise RuntimeError("주소록이 비어 있습니다.")
         recipient_name = recipient_cfg["name"]
-        clicked = click_link_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
-        if not clicked:
-            clicked = click_cell_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
-        if not clicked:
-            page4.close()
-            raise RuntimeError("주소록에서 수취인을 찾지 못했습니다.")
-        step_delay(page4, timeouts["action"])
-        try:
-            page4.close()
-        except PlaywrightError:
-            pass
+        receiver_check_arg = {"selector": 'input[name="receiverName"]', "token": recipient_name}
+
+        def _wait_receiver_applied(check_arg: dict, timeout_ms: int) -> bool:
+            try:
+                page.wait_for_function(
+                    """(payload) => {
+                        const el = document.querySelector(payload.selector);
+                        if (!el) return false;
+                        const v = (el.value || '').toString();
+                        return v.includes(payload.token);
+                    }""",
+                    arg=check_arg,
+                    timeout=timeout_ms,
+                )
+                return True
+            except PlaywrightTimeoutError:
+                return False
+
+        applied = False
+        for attempt in range(3):
+            if hasattr(page4, "is_closed") and page4.is_closed():
+                break
+            if attempt == 0:
+                clicked = click_cell_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
+            elif attempt == 1:
+                clicked = click_link_by_text(page4, recipient_name, timeout_ms=timeouts["action"])
+            else:
+                try:
+                    clicked = bool(
+                        page4.evaluate(
+                            """(token) => {
+                                const normalize = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                                const isVisible = (el) => {
+                                    if (!el) return false;
+                                    const style = window.getComputedStyle(el);
+                                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                                    const rect = el.getBoundingClientRect();
+                                    return rect.width > 0 && rect.height > 0;
+                                };
+                                const links = Array.from(document.querySelectorAll('a')).filter(isVisible);
+                                const target = links.find((a) => normalize(a.textContent).includes(token));
+                                if (!target) return false;
+                                target.click();
+                                return true;
+                            }""",
+                            recipient_name,
+                        )
+                    )
+                except PlaywrightError:
+                    clicked = False
+
+            if not clicked:
+                continue
+
+            step_delay(page4, timeouts["action"])
+            applied = _wait_receiver_applied(
+                receiver_check_arg,
+                min(timeouts["popup"], 5000) if attempt == 0 else timeouts["popup"],
+            )
+            if applied:
+                break
+
+        if not applied:
+            raise RuntimeError("받는 분 정보가 메인 페이지에 적용되지 않았습니다.")
 
         try:
-            page.wait_for_function(
-                """(payload) => {
-                    const el = document.querySelector(payload.selector);
-                    if (!el) return false;
-                    const v = (el.value || '').toString();
-                    return v.includes(payload.token);
-                }""",
-                arg={"selector": 'input[name="receiverName"]', "token": recipient_name},
-                timeout=timeouts["popup"],
-            )
-        except PlaywrightTimeoutError:
-            raise RuntimeError("받는 분 정보가 메인 페이지에 적용되지 않았습니다.")
+            if hasattr(page4, "is_closed") and page4.is_closed():
+                pass
+            else:
+                page4.close()
+        except PlaywrightError:
+            pass
 
         click_next_button(page, config, timeouts["action"])
 
