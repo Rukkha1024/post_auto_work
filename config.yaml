@@ -63,6 +63,8 @@ epost:
   # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
     sections:
+      sender:
+        heading_text_contains: "01 보내는 분"
       recipient:
         heading_text_contains: "03 받는 분"
       item_info:
@@ -102,7 +104,9 @@ epost:
 
     # 주소 검색 팝업 설정 (보내는 분)
     address_popup:
-      trigger_onclick_contains: "newRePostNum"
+      trigger_onclick_contains_by_target:
+        sender: "newPostNum"
+        recipient: "newRePostNum"
       trigger_text_contains: "주소찾기"
       keyword_selector: 'input[name="keyword"]'
       keyword: "향군로 74번길 26"

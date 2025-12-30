@@ -430,14 +430,23 @@ def navigate_to_parcel_reservation(page, config: dict, timeout_ms: int | None = 
             raise RuntimeError(f"메뉴 링크를 찾지 못했습니다: {step_cfg['text']}")
 
 
-def toggle_address_popup_trigger(page, config: dict, click: bool, timeout_ms: int | None = None) -> bool:
+def toggle_address_popup_trigger(
+    page, config: dict, click: bool, timeout_ms: int | None = None, target: str = "sender"
+) -> bool:
     epost_cfg = config["epost"]
     process_cfg = epost_cfg["working_process"]
     popup_cfg = process_cfg["address_popup"]
+    onclick_contains = None
+    trigger_map = popup_cfg.get("trigger_onclick_contains_by_target", {})
+    if isinstance(trigger_map, dict):
+        onclick_contains = trigger_map.get(target)
+    if not onclick_contains:
+        onclick_contains = popup_cfg.get("trigger_onclick_contains")
     payload = {
         "click": click,
-        "onclick_contains": popup_cfg["trigger_onclick_contains"],
-        "text_contains": popup_cfg["trigger_text_contains"],
+        "onclick_contains": onclick_contains,
+        "text_contains": popup_cfg.get("trigger_text_contains"),
+        "require_visible": True,
     }
     clicked = page.evaluate(
         """(payload) => {
@@ -451,7 +460,8 @@ def toggle_address_popup_trigger(page, config: dict, click: bool, timeout_ms: in
             const pickMatch = (matches) => {
                 if (!matches.length) return null;
                 const visible = matches.find(isVisible);
-                return visible || matches[0];
+                if (visible) return visible;
+                return payload.require_visible ? null : matches[0];
             };
             const findLink = () => {
                 if (payload.onclick_contains) {
@@ -483,15 +493,21 @@ def toggle_address_popup_trigger(page, config: dict, click: bool, timeout_ms: in
     return clicked
 
 
-def open_address_popup(page, config: dict, timeout_ms: int):
-    script_cfg = config["epost"]["script"]
-    popup_timeout_ms = script_cfg["timeouts_ms"]["popup"]
-    if not toggle_address_popup_trigger(page, config, False):
+def open_address_popup(page, config: dict, timeout_ms: int, target: str = "sender"):
+    epost_cfg = config["epost"]
+    process_cfg = epost_cfg["working_process"]
+    sections_cfg = process_cfg.get("sections", {})
+    heading = sections_cfg.get(target, {}).get("heading_text_contains")
+    if heading:
+        ensure_section_open(page, heading, timeout_ms)
+
+    popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
+    if not toggle_address_popup_trigger(page, config, False, timeout_ms=timeout_ms, target=target):
         raise RuntimeError("주소찾기 링크를 찾지 못했습니다.")
 
     try:
         with page.expect_popup(timeout=popup_timeout_ms) as popup_info:
-            toggle_address_popup_trigger(page, config, True, timeout_ms)
+            toggle_address_popup_trigger(page, config, True, timeout_ms, target=target)
         return popup_info.value
     except PlaywrightTimeoutError as exc:
         raise RuntimeError("주소찾기 팝업이 열리지 않았습니다.") from exc
@@ -706,7 +722,7 @@ def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
 def fill_sender_section(page, config: dict, timeouts: dict) -> None:
     process_cfg = config["epost"]["working_process"]
     sender_cfg = process_cfg["sender"]
-    page2 = open_address_popup(page, config, timeouts["action"])
+    page2 = open_address_popup(page, config, timeouts["action"], target="sender")
     attach_dialog_handler(page2, config["epost"]["script"]["login"]["accept_dialog_contains"])
     fill_address_popup(page2, config, timeouts["action"])
     step_delay(page2, timeouts["action"])
@@ -733,7 +749,7 @@ def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
     process_cfg = epost_cfg["working_process"]
     recipient_cfg = process_cfg["recipient"]
     set_input_value(page, 'input[name="receiverName"]', recipient_cfg["name"], timeouts["action"])
-    page2 = open_address_popup(page, config, timeouts["action"])
+    page2 = open_address_popup(page, config, timeouts["action"], target="recipient")
     fill_address_popup(page2, config, timeouts["action"])
     step_delay(page2, timeouts["action"])
     page2.close()
