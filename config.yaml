@@ -18,7 +18,7 @@ epost:
       args:
         - "--disable-notifications"
         - "--disable-features=BlockInsecurePrivateNetworkRequests"
-      keep_open_after_run: true
+      keep_open_after_run: false
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:

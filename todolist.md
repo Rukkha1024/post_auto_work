@@ -16,4 +16,9 @@ command: `conda run -n playwright python tests/post_test.py`
 implement @plan.md 
 
 ===========
-post_test_V2.py의 작업 내용이 post_test.py에도 있는지 확인해봐. 없는 것 같은데? 중복되는 부분은 굳이 recording하지 않았어. 
+post_test_V2.py의 작업 내용과 순서가 post_test.py과 일치하는지  확인해봐. 없는 것 같은데?
+<exclude> 내용은 녹화하지 않았다. 
+<exclude>
+- login
+- card info
+</exclue>
