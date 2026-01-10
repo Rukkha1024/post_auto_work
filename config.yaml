@@ -97,8 +97,6 @@ epost:
           index: 1
         - text: "방문접수소포 반품예약"
           index: 2
-        - text: "menu"
-          index: 0
         - text: "방문접수소포 방문접수예약"
           index: 0
 
