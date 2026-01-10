@@ -346,16 +346,95 @@ def set_input_value(page, selector: str, value: str, timeout_ms: int | None = No
 def set_select_value(page, selector: str, value: str, timeout_ms: int | None = None) -> bool:
     if value is None:
         return False
-    updated = page.evaluate(
+    result = page.evaluate(
         """(payload) => {
             const el = document.querySelector(payload.selector);
-            if (!el) return false;
-            el.value = payload.value;
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
+            if (!el) return { ok: false, reason: 'not_found' };
+
+            const desiredRaw = (payload.value ?? '').toString();
+            const desired = desiredRaw.trim();
+            const normalize = (text) => (text || '').toString().replace(/\\s+/g, '').trim();
+            const digits = (text) => (text || '').toString().replace(/\\D+/g, '');
+
+            const dispatch = () => {
+                try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+                try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+            };
+
+            const setValue = (v) => {
+                el.value = v;
+                dispatch();
+                return el.value === v;
+            };
+
+            if (setValue(desired)) {
+                return { ok: true, matched: 'value', used: desired, current: el.value };
+            }
+
+            const options = Array.from(el.options || []);
+            const desiredCompact = normalize(desired);
+            const desiredDigits = digits(desiredCompact);
+
+            const matchByTextOrValue = () => {
+                if (!desired) return null;
+                let match =
+                    options.find((opt) => (opt.value || '') === desired) ||
+                    options.find((opt) => normalize(opt.textContent || '') === desiredCompact) ||
+                    options.find((opt) => normalize(opt.textContent || '').includes(desiredCompact)) ||
+                    options.find((opt) => normalize(opt.value || '').includes(desiredCompact));
+                if (match) return match;
+                if (desiredDigits) {
+                    match =
+                        options.find((opt) => digits(opt.value || '') === desiredDigits) ||
+                        options.find((opt) => digits(opt.textContent || '') === desiredDigits) ||
+                        options.find((opt) => digits(opt.textContent || '').includes(desiredDigits)) ||
+                        options.find((opt) => digits(opt.value || '').includes(desiredDigits));
+                }
+                return match || null;
+            };
+
+            const match = matchByTextOrValue();
+            if (match && setValue(match.value)) {
+                return { ok: true, matched: 'option_match', used: match.value, current: el.value };
+            }
+
+            const isDateDigits = desiredDigits.length >= 8 && desiredDigits.startsWith('20');
+            if (isDateDigits && options.length) {
+                const desiredDateDigits = desiredDigits.slice(0, 8);
+                const desiredInt = parseInt(desiredDateDigits, 10);
+                const candidates = options
+                    .map((opt) => {
+                        const textDigits = digits(opt.textContent || '');
+                        const valueDigits = digits(opt.value || '');
+                        const merged = (textDigits || valueDigits || '').toString();
+                        const dateDigits = merged.startsWith('20') && merged.length >= 8 ? merged.slice(0, 8) : '';
+                        const dateInt = dateDigits ? parseInt(dateDigits, 10) : NaN;
+                        return { opt, dateInt };
+                    })
+                    .filter((row) => Number.isFinite(row.dateInt));
+
+                if (candidates.length) {
+                    const future = candidates
+                        .filter((row) => row.dateInt >= desiredInt)
+                        .sort((a, b) => a.dateInt - b.dateInt)[0];
+                    const fallback = candidates.sort((a, b) => a.dateInt - b.dateInt)[0];
+                    const chosen = (future || fallback).opt;
+                    if (chosen && setValue(chosen.value)) {
+                        return { ok: true, matched: 'closest_date', used: chosen.value, current: el.value };
+                    }
+                }
+            }
+
+            const fallbackOption = options.find((opt) => (opt.value || '').toString().trim() !== '');
+            if (fallbackOption && setValue(fallbackOption.value)) {
+                return { ok: true, matched: 'fallback_first', used: fallbackOption.value, current: el.value };
+            }
+
+            return { ok: false, reason: 'no_match', current: el.value };
         }""",
         {"selector": selector, "value": value},
     )
+    updated = bool(result and result.get("ok"))
     if updated:
         step_delay(page, timeout_ms)
     return updated

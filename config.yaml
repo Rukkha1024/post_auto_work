@@ -23,7 +23,7 @@ epost:
       permissions_origins:
         - "https://www.epost.go.kr"
         - "https://parcel.epost.go.kr"
-      keep_open_after_run: false
+      keep_open_after_run: true
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
@@ -67,10 +67,10 @@ epost:
     filter:
       management_no:
         column: "관리번호"
-        value: "7"
+        value: "38"
       subject_name:
         column: "대상자 이름"
-        value: "류영호"
+        value: "김미선"
     columns:
       sender_contact: "대상자연락처"
       wish_receipt_date: "희망 회수 방문일"
@@ -79,7 +79,7 @@ epost:
   # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
     # 1=01 보내는 분, 2=02 방문접수 소포정보, 3=03 받는 분 ... (None/미설정 시 끝까지 실행)
-    run_until_step: 2
+    run_until_step: null
     sections:
       sender:
         heading_text_contains: "01 보내는 분"
