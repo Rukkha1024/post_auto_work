@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -38,6 +40,132 @@ def sha256_text(value: str) -> str:
     if not isinstance(value, str):
         value = str(value)
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def resolve_repo_path(value: str | Path) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        path = ROOT / path
+    return path
+
+
+def parse_sender_phone_parts(value: object) -> tuple[str, str]:
+    digits = re.sub(r"\D+", "", str(value or ""))
+    if digits.startswith("82"):
+        digits = "0" + digits[2:]
+    if len(digits) == 10 and digits.startswith("10"):
+        digits = "0" + digits
+    if len(digits) > 11:
+        if "010" in digits:
+            start = digits.find("010")
+            digits = digits[start : start + 11]
+        else:
+            digits = digits[-11:]
+    if len(digits) != 11:
+        raise ValueError(f"휴대전화 형식이 올바르지 않습니다: {value!r}")
+    return digits[3:7], digits[7:11]
+
+
+def parse_ymd_date(value: object) -> str:
+    if value is None:
+        raise ValueError("방문일 값이 비어 있습니다.")
+    if isinstance(value, datetime):
+        return value.date().strftime("%Y-%m-%d")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+
+    text = str(value).strip()
+    match = re.search(r"(\d{4})[-./](\d{1,2})[-./](\d{1,2})", text)
+    if match:
+        year, month, day = match.groups()
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})", text)
+    if match:
+        year, month, day = match.groups()
+        return f"{year}-{month}-{day}"
+    raise ValueError(f"방문일 형식이 올바르지 않습니다: {value!r}")
+
+
+def load_subject_row_from_excel(config: dict) -> dict[str, object]:
+    epost_cfg = config.get("epost") or {}
+    excel_cfg = epost_cfg.get("input_excel") or {}
+    if not excel_cfg:
+        raise ValueError("config.yaml의 epost.input_excel 설정이 없습니다.")
+
+    excel_path = resolve_repo_path(excel_cfg.get("path") or "")
+    sheet_name = excel_cfg.get("sheet_name")
+    if not excel_path.exists():
+        raise FileNotFoundError(f"엑셀 파일을 찾지 못했습니다: {excel_path}")
+    if not sheet_name:
+        raise ValueError("config.yaml의 epost.input_excel.sheet_name 설정이 비어 있습니다.")
+
+    import polars as pl
+
+    df = pl.read_excel(str(excel_path), sheet_name=str(sheet_name))
+    filter_cfg = excel_cfg.get("filter") or {}
+    mgmt_cfg = filter_cfg.get("management_no") or {}
+    name_cfg = filter_cfg.get("subject_name") or {}
+    mgmt_col = mgmt_cfg.get("column")
+    mgmt_value = str(mgmt_cfg.get("value") or "").strip()
+    name_col = name_cfg.get("column")
+    name_value = str(name_cfg.get("value") or "").strip()
+    if not mgmt_col or not mgmt_value:
+        raise ValueError("config.yaml의 epost.input_excel.filter.management_no 설정이 올바르지 않습니다.")
+    if not name_col or not name_value:
+        raise ValueError("config.yaml의 epost.input_excel.filter.subject_name 설정이 올바르지 않습니다.")
+
+    filtered = df.filter(
+        (pl.col(str(mgmt_col)).cast(pl.Utf8).str.strip_chars() == mgmt_value)
+        & (pl.col(str(name_col)).cast(pl.Utf8).str.strip_chars() == name_value)
+    )
+    if filtered.height == 0:
+        raise ValueError(
+            f"엑셀에서 대상자 행을 찾지 못했습니다: "
+            f"{mgmt_col}={mgmt_value!r}, {name_col}={name_value!r} "
+            f"(파일={excel_path}, 시트={sheet_name})"
+        )
+    return filtered.row(0, named=True)
+
+
+def apply_excel_overrides(config: dict) -> None:
+    epost_cfg = config.get("epost") or {}
+    excel_cfg = epost_cfg.get("input_excel") or {}
+    if not excel_cfg:
+        return
+
+    row = load_subject_row_from_excel(config)
+    columns_cfg = excel_cfg.get("columns") or {}
+    contact_col = columns_cfg.get("sender_contact")
+    wish_date_col = columns_cfg.get("wish_receipt_date")
+    pickup_address_col = columns_cfg.get("pickup_address")
+    if not contact_col or not wish_date_col or not pickup_address_col:
+        raise ValueError("config.yaml의 epost.input_excel.columns 설정이 올바르지 않습니다.")
+
+    sender_middle, sender_last = parse_sender_phone_parts(row.get(str(contact_col)))
+    wish_receipt_date = parse_ymd_date(row.get(str(wish_date_col)))
+    pickup_address = str(row.get(str(pickup_address_col)) or "").strip()
+    if not pickup_address:
+        raise ValueError("엑셀의 택배 회수장소 주소 값이 비어 있습니다.")
+
+    process_cfg = epost_cfg.get("working_process") or {}
+    sender_cfg = process_cfg.get("sender") or {}
+    sender_phone_cfg = sender_cfg.get("phone") or {}
+    sender_phone_cfg["middle"] = sender_middle
+    sender_phone_cfg["last"] = sender_last
+    sender_cfg["phone"] = sender_phone_cfg
+    process_cfg["sender"] = sender_cfg
+
+    parcel_cfg = process_cfg.get("parcel") or {}
+    parcel_cfg["wish_receipt_date"] = wish_receipt_date
+    process_cfg["parcel"] = parcel_cfg
+
+    popup_cfg = process_cfg.get("address_popup") or {}
+    popup_cfg["keyword"] = pickup_address
+    popup_cfg["result_text_contains"] = re.sub(r"\s+", "", pickup_address)
+    process_cfg["address_popup"] = popup_cfg
+
+    epost_cfg["working_process"] = process_cfg
+    config["epost"] = epost_cfg
 
 
 def collect_validation_snapshot(page) -> dict:
@@ -719,14 +847,26 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
     page.wait_for_timeout(timeout_ms)
 
     found = page.evaluate(
-        """(text) => {
+        """(payload) => {
+            const normalize = (text) => (text || '').replace(/\\s+/g, '').trim();
+            const tokens = (payload.tokens || []).filter(Boolean);
+            const normalizedTokens = tokens.map(normalize).filter(Boolean);
             const links = Array.from(document.querySelectorAll('a'));
-            const target = links.find(link => (link.textContent || '').includes(text));
+
+            const target = links.find((link) => {
+                const text = link.textContent || '';
+                const normalized = normalize(text);
+                return normalizedTokens.some((token) => normalized.includes(token));
+            }) || links.find((link) => {
+                const text = link.textContent || '';
+                return tokens.some((token) => text.includes(token));
+            });
+
             if (!target) return false;
             target.click();
             return true;
         }""",
-        popup_cfg["result_text_contains"],
+        {"tokens": [popup_cfg.get("result_text_contains"), popup_cfg.get("keyword")]},
     )
     if found:
         step_delay(page, timeout_ms)
@@ -1062,6 +1202,7 @@ def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
 
 def run(playwright: Playwright) -> None:
     config = load_config()
+    apply_excel_overrides(config)
     epost_cfg = config["epost"]
     script_cfg = epost_cfg["script"]
     process_cfg = epost_cfg["working_process"]
@@ -1071,6 +1212,11 @@ def run(playwright: Playwright) -> None:
     ensure_progress_dir(progress_dir)
     keep_open_after_run = script_cfg["browser"].get("keep_open_after_run", False)
     keep_open_poll_ms = timeouts.get("keep_open_poll_ms", 1000)
+    run_until_step = process_cfg.get("run_until_step")
+    try:
+        run_until_step_int = int(run_until_step) if run_until_step is not None else None
+    except (TypeError, ValueError):
+        run_until_step_int = None
 
     browser = playwright.chromium.launch(
         headless=script_cfg["browser"]["headless"],
@@ -1136,6 +1282,10 @@ def run(playwright: Playwright) -> None:
             raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
 
         fill_sender_section(page, config, timeouts)
+        if run_until_step_int == 1:
+            write_success_artifacts(page, progress_dir, prefix="post_test_partial_step01")
+            print("Stopped after step 01 (sender).")
+            return
         click_next_button(page, config, timeouts["action"])
 
         parcel_cfg = process_cfg["parcel"]
@@ -1201,6 +1351,10 @@ def run(playwright: Playwright) -> None:
 
         pickup_save_selector = (parcel_selectors_cfg.get("buttons") or {}).get("pickup_save", "#pickupSaveBtn")
         click_selector(page, pickup_save_selector, timeouts["action"])
+        if run_until_step_int == 2:
+            write_success_artifacts(page, progress_dir, prefix="post_test_partial_step02")
+            print("Stopped after step 02 (pickup info).")
+            return
         pickup_next_cfg = parcel_selectors_cfg.get("next") or {}
         pickup_next_container = pickup_next_cfg.get("container_selector", "#pickupInfoDiv")
         pickup_next_text = pickup_next_cfg.get("text", "다음")

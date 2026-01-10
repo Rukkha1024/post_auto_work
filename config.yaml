@@ -60,8 +60,26 @@ epost:
       close_url_contains:
         - "main.retrieveMainPopupDetail.comm"
 
+  # 입력 데이터(엑셀) 설정: 특정 대상자 행을 찾아 자동입력에 사용
+  input_excel:
+    path: "질병청구글시트복제본.xlsx"
+    sheet_name: "2025_수도권1(민형)"
+    filter:
+      management_no:
+        column: "관리번호"
+        value: "7"
+      subject_name:
+        column: "대상자 이름"
+        value: "류영호"
+    columns:
+      sender_contact: "대상자연락처"
+      wish_receipt_date: "희망 회수 방문일"
+      pickup_address: "택배 회수장소 주소"
+
   # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
+    # 1=01 보내는 분, 2=02 방문접수 소포정보, 3=03 받는 분 ... (None/미설정 시 끝까지 실행)
+    run_until_step: 2
     sections:
       sender:
         heading_text_contains: "01 보내는 분"
