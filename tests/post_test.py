@@ -159,10 +159,11 @@ def apply_excel_overrides(config: dict) -> None:
     parcel_cfg["wish_receipt_date"] = wish_receipt_date
     process_cfg["parcel"] = parcel_cfg
 
-    popup_cfg = process_cfg.get("address_popup") or {}
-    popup_cfg["keyword"] = pickup_address
-    popup_cfg["result_text_contains"] = re.sub(r"\s+", "", pickup_address)
-    process_cfg["address_popup"] = popup_cfg
+    if re.search(r"\d", pickup_address):
+        popup_cfg = process_cfg.get("address_popup") or {}
+        popup_cfg["keyword"] = pickup_address
+        popup_cfg["result_text_contains"] = re.sub(r"\s+", "", pickup_address)
+        process_cfg["address_popup"] = popup_cfg
 
     epost_cfg["working_process"] = process_cfg
     config["epost"] = epost_cfg
