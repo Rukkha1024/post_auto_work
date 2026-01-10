@@ -79,7 +79,7 @@ epost:
   # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
   working_process:
     # 1=01 보내는 분, 2=02 방문접수 소포정보, 3=03 받는 분 ... (None/미설정 시 끝까지 실행)
-    run_until_step: null
+    run_until_step: 2
     sections:
       sender:
         heading_text_contains: "01 보내는 분"

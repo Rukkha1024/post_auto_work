@@ -86,6 +86,51 @@ def parse_ymd_date(value: object) -> str:
     raise ValueError(f"방문일 형식이 올바르지 않습니다: {value!r}")
 
 
+def normalize_spaces(value: str) -> str:
+    return re.sub(r"\s+", " ", value or "").strip()
+
+
+def compact_spaces(value: str) -> str:
+    return re.sub(r"\s+", "", value or "").strip()
+
+
+def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
+    raw = normalize_spaces(str(value or ""))
+    if not raw:
+        raise ValueError("택배 회수장소 주소 값이 비어 있습니다.")
+
+    building_match = re.search(r"(\d{1,4})\s*동", raw)
+    unit_match = re.search(r"(\d{1,4})\s*호", raw)
+    building = building_match.group(1) if building_match else None
+    unit = unit_match.group(1) if unit_match else None
+
+    keyword = raw.split(",", 1)[0].strip()
+    if not keyword:
+        keyword = raw
+
+    details_match = re.search(r"\d{1,4}\s*동", keyword)
+    if details_match:
+        keyword = keyword[: details_match.start()].strip().rstrip(",")
+    details_match = re.search(r"\d{1,4}\s*호", keyword)
+    if details_match:
+        keyword = keyword[: details_match.start()].strip().rstrip(",")
+
+    road_pattern = r"[가-힣0-9]+(?:로|길|대로)\s*\d+(?:-\d+)?(?:\s*번길\s*\d+(?:-\d+)?)?"
+    road_match = re.search(road_pattern, keyword) or re.search(road_pattern, raw)
+    if road_match:
+        result_token = compact_spaces(road_match.group(0))
+    else:
+        result_token = compact_spaces(keyword or raw)
+
+    return {
+        "raw": raw,
+        "keyword": keyword,
+        "result_text_contains": result_token,
+        "building": building,
+        "unit": unit,
+    }
+
+
 def load_subject_row_from_excel(config: dict) -> dict[str, object]:
     epost_cfg = config.get("epost") or {}
     excel_cfg = epost_cfg.get("input_excel") or {}
@@ -159,10 +204,27 @@ def apply_excel_overrides(config: dict) -> None:
     parcel_cfg["wish_receipt_date"] = wish_receipt_date
     process_cfg["parcel"] = parcel_cfg
 
-    if re.search(r"\d", pickup_address):
+    try:
+        pickup_rule = parse_pickup_address_rule(pickup_address)
+    except ValueError:
+        pickup_rule = {}
+
+    keyword = str(pickup_rule.get("keyword") or "").strip()
+    if keyword and re.search(r"\d", keyword):
         popup_cfg = process_cfg.get("address_popup") or {}
-        popup_cfg["keyword"] = pickup_address
-        popup_cfg["result_text_contains"] = re.sub(r"\s+", "", pickup_address)
+        popup_cfg["keyword"] = keyword
+        popup_cfg["result_text_contains"] = str(pickup_rule.get("result_text_contains") or "").strip() or compact_spaces(
+            keyword
+        )
+
+        building = pickup_rule.get("building")
+        unit = pickup_rule.get("unit")
+        if building and unit:
+            popup_cfg["building"] = str(building)
+            popup_cfg["unit"] = str(unit)
+        else:
+            popup_cfg.pop("building", None)
+            popup_cfg.pop("unit", None)
         process_cfg["address_popup"] = popup_cfg
 
     epost_cfg["working_process"] = process_cfg
@@ -1362,6 +1424,7 @@ def run(playwright: Playwright) -> None:
             raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
 
         fill_sender_section(page, config, timeouts)
+        write_success_artifacts(page, progress_dir, prefix="post_test_step01_sender_filled")
         if run_until_step_int == 1:
             write_success_artifacts(page, progress_dir, prefix="post_test_partial_step01")
             print("Stopped after step 01 (sender).")
