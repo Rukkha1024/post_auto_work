@@ -31,3 +31,6 @@ Archive/*
 progress/post_test_batch_summary_*.json
 progress/juso_cache.json
 
+# secrets / local-only docs (do not commit)
+juso.api/
+
