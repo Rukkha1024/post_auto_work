@@ -1569,16 +1569,18 @@ def open_parcel_reservation_page(page, config: dict, timeouts: dict, main_page_u
     epost_cfg = config["epost"]
     script_cfg = epost_cfg["script"]
 
-    page.goto(script_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
-    page.wait_for_timeout(timeouts["page_stabilize"])
-    if "parcel.epost.go.kr" in (page.url or ""):
-        return
-
     if main_page_url:
         page.goto(main_page_url, wait_until="domcontentloaded")
         page.wait_for_timeout(timeouts["page_stabilize"])
         navigate_to_parcel_reservation(page, config, timeouts["action"])
         page.wait_for_timeout(timeouts["page_stabilize"])
+        if "parcel.epost.go.kr" in (page.url or ""):
+            return
+
+    page.goto(script_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
+    page.wait_for_timeout(timeouts["page_stabilize"])
+    if "parcel.epost.go.kr" not in (page.url or ""):
+        raise RuntimeError("택배 예약 페이지로 이동하지 못했습니다.")
 
 
 def run_parcel_reservation_flow(
