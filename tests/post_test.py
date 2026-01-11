@@ -94,6 +94,17 @@ def compact_spaces(value: str) -> str:
     return re.sub(r"\s+", "", value or "").strip()
 
 
+def safe_filename_token(value: str, max_len: int = 40) -> str:
+    token = normalize_spaces(str(value or "")).strip()
+    token = re.sub(r'[<>:"/\\\\|?*]+', "_", token)
+    token = token.replace(" ", "_").strip("._")
+    if not token:
+        token = "unknown"
+    if len(token) > max_len:
+        token = token[:max_len].rstrip("._")
+    return token
+
+
 def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
     raw = normalize_spaces(str(value or ""))
     if not raw:
@@ -131,8 +142,37 @@ def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
     }
 
 
-def load_subject_row_from_excel(config: dict) -> dict[str, object]:
-    # input_excel이 최상위 레벨로 이동됨
+def get_excel_targets(config: dict) -> list[dict[str, str]]:
+    excel_cfg = config.get("input_excel") or {}
+    if not excel_cfg:
+        return []
+
+    targets_raw = excel_cfg.get("targets")
+    if isinstance(targets_raw, list) and targets_raw:
+        targets: list[dict[str, str]] = []
+        for idx, target in enumerate(targets_raw):
+            if not isinstance(target, dict):
+                raise ValueError(f"config.yaml의 input_excel.targets[{idx}]가 dict가 아닙니다.")
+            management_no = str(target.get("management_no") or "").strip()
+            subject_name = str(target.get("subject_name") or "").strip()
+            if not management_no or not subject_name:
+                raise ValueError(
+                    f"config.yaml의 input_excel.targets[{idx}]에 management_no/subject_name이 필요합니다."
+                )
+            targets.append({"management_no": management_no, "subject_name": subject_name})
+        return targets
+
+    filter_cfg = excel_cfg.get("filter") or {}
+    mgmt_cfg = filter_cfg.get("management_no") or {}
+    name_cfg = filter_cfg.get("subject_name") or {}
+    management_no = str(mgmt_cfg.get("value") or "").strip()
+    subject_name = str(name_cfg.get("value") or "").strip()
+    if not management_no or not subject_name:
+        raise ValueError("config.yaml의 input_excel.targets 또는 input_excel.filter.*.value 설정이 필요합니다.")
+    return [{"management_no": management_no, "subject_name": subject_name}]
+
+
+def load_subject_dataframe_from_excel(config: dict):
     excel_cfg = config.get("input_excel") or {}
     if not excel_cfg:
         raise ValueError("config.yaml의 input_excel 설정이 없습니다.")
@@ -144,59 +184,67 @@ def load_subject_row_from_excel(config: dict) -> dict[str, object]:
     if not sheet_name:
         raise ValueError("config.yaml의 input_excel.sheet_name 설정이 비어 있습니다.")
 
-    import polars as pl
-
-    # Extract filter column names first
     filter_cfg = excel_cfg.get("filter") or {}
     mgmt_cfg = filter_cfg.get("management_no") or {}
     name_cfg = filter_cfg.get("subject_name") or {}
-    mgmt_col = mgmt_cfg.get("column")
-    name_col = name_cfg.get("column")
+    mgmt_col = str(mgmt_cfg.get("column") or "").strip()
+    name_col = str(name_cfg.get("column") or "").strip()
+    if not mgmt_col:
+        raise ValueError("config.yaml의 input_excel.filter.management_no.column 설정이 올바르지 않습니다.")
+    if not name_col:
+        raise ValueError("config.yaml의 input_excel.filter.subject_name.column 설정이 올바르지 않습니다.")
 
-    # Build list of required columns to read
-    columns_to_read = set()
-    if mgmt_col:
-        columns_to_read.add(str(mgmt_col))
-    if name_col:
-        columns_to_read.add(str(name_col))
-    # Add data columns from input_excel.columns
+    columns_to_read = {mgmt_col, name_col}
     for col_name in (excel_cfg.get("columns") or {}).values():
-        columns_to_read.add(str(col_name))
+        col_str = str(col_name or "").strip()
+        if col_str:
+            columns_to_read.add(col_str)
 
-    # Read only required columns from Excel
+    import polars as pl
+
     df = pl.read_excel(
         str(excel_path),
         sheet_name=str(sheet_name),
-        columns=list(columns_to_read)
+        columns=sorted(columns_to_read),
     )
+    return df, excel_path, str(sheet_name), mgmt_col, name_col
 
-    mgmt_value = str(mgmt_cfg.get("value") or "").strip()
-    name_value = str(name_cfg.get("value") or "").strip()
-    if not mgmt_col or not mgmt_value:
-        raise ValueError("config.yaml의 input_excel.filter.management_no 설정이 올바르지 않습니다.")
-    if not name_col or not name_value:
-        raise ValueError("config.yaml의 input_excel.filter.subject_name 설정이 올바르지 않습니다.")
+
+def load_subject_row_from_dataframe(
+    df,
+    management_no_col: str,
+    subject_name_col: str,
+    management_no: str,
+    subject_name: str,
+    excel_path: Path,
+    sheet_name: str,
+) -> dict[str, object]:
+    mgmt_value = str(management_no or "").strip()
+    name_value = str(subject_name or "").strip()
+    if not mgmt_value or not name_value:
+        raise ValueError("대상자 관리번호/이름이 비어 있습니다.")
+
+    import polars as pl
 
     filtered = df.filter(
-        (pl.col(str(mgmt_col)).cast(pl.Utf8).str.strip_chars() == mgmt_value)
-        & (pl.col(str(name_col)).cast(pl.Utf8).str.strip_chars() == name_value)
+        (pl.col(str(management_no_col)).cast(pl.Utf8).str.strip_chars() == mgmt_value)
+        & (pl.col(str(subject_name_col)).cast(pl.Utf8).str.strip_chars() == name_value)
     )
     if filtered.height == 0:
         raise ValueError(
             f"엑셀에서 대상자 행을 찾지 못했습니다: "
-            f"{mgmt_col}={mgmt_value!r}, {name_col}={name_value!r} "
+            f"{management_no_col}={mgmt_value!r}, {subject_name_col}={name_value!r} "
             f"(파일={excel_path}, 시트={sheet_name})"
         )
     return filtered.row(0, named=True)
 
 
-def apply_excel_overrides(config: dict) -> None:
+def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str, str] | None = None) -> None:
     # input_excel이 최상위 레벨로 이동됨
     excel_cfg = config.get("input_excel") or {}
     if not excel_cfg:
         return
 
-    row = load_subject_row_from_excel(config)
     columns_cfg = excel_cfg.get("columns") or {}
     sender_name_col = columns_cfg.get("sender_name")
     contact_col = columns_cfg.get("sender_contact")
@@ -215,7 +263,7 @@ def apply_excel_overrides(config: dict) -> None:
         if fallback_col:
             sender_name_value = row.get(str(fallback_col))
         else:
-            sender_name_value = fallback_name_cfg.get("value")
+            sender_name_value = (target or {}).get("subject_name") or fallback_name_cfg.get("value")
     sender_name = normalize_spaces(str(sender_name_value or "")).strip()
 
     sender_middle, sender_last = parse_sender_phone_parts(row.get(str(contact_col)))
@@ -250,7 +298,7 @@ def apply_excel_overrides(config: dict) -> None:
         pickup_rule = {}
 
     keyword = str(pickup_rule.get("keyword") or "").strip()
-    if keyword and re.search(r"\d", keyword):
+    if keyword:
         shared_cfg = workflow_cfg.get("shared") or {}
         popup_cfg = shared_cfg.get("address_popup") or {}
         popup_cfg["keyword"] = keyword
@@ -1497,9 +1545,321 @@ def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
     set_input_value(page, phone_3_selector, phone_parts[2], timeouts["action"])
 
 
+def login_epost_once(page, config: dict, timeouts: dict) -> str:
+    epost_cfg = config["epost"]
+    script_cfg = epost_cfg["script"]
+    page.goto(script_cfg["urls"]["login"], wait_until="domcontentloaded")
+    page.wait_for_timeout(timeouts["page_stabilize"])
+
+    login_result = remove_modal_and_login(page, config, timeouts["action"])
+    if not login_result["id_found"] or not login_result["pw_found"]:
+        raise RuntimeError("로그인 입력창을 찾지 못했습니다.")
+    if not login_result["submitted"]:
+        raise RuntimeError("로그인 제출에 실패했습니다.")
+
+    try:
+        page.wait_for_url("**/main.retrieveMainPage.comm", timeout=timeouts["login_wait"])
+    except PlaywrightTimeoutError as exc:
+        raise RuntimeError("로그인 완료 페이지로 이동하지 못했습니다.") from exc
+    step_delay(page, timeouts["action"])
+    return canonicalize_url(page.url)
+
+
+def open_parcel_reservation_page(page, config: dict, timeouts: dict, main_page_url: str | None) -> None:
+    epost_cfg = config["epost"]
+    script_cfg = epost_cfg["script"]
+
+    page.goto(script_cfg["urls"]["parcel_reservation"], wait_until="domcontentloaded")
+    page.wait_for_timeout(timeouts["page_stabilize"])
+    if "parcel.epost.go.kr" in (page.url or ""):
+        return
+
+    if main_page_url:
+        page.goto(main_page_url, wait_until="domcontentloaded")
+        page.wait_for_timeout(timeouts["page_stabilize"])
+        navigate_to_parcel_reservation(page, config, timeouts["action"])
+        page.wait_for_timeout(timeouts["page_stabilize"])
+
+
+def run_parcel_reservation_flow(
+    page,
+    config: dict,
+    timeouts: dict,
+    progress_dir: Path,
+    run_until_step_int: int | None,
+    target_slug: str,
+) -> tuple[str, dict[str, dict[str, str]]]:
+    workflow_cfg = config["epost"]["workflow"]
+    artifacts: dict[str, dict[str, str]] = {}
+
+    agree_text = workflow_cfg["step_00_initial"]["agree_checkbox_text"]
+    checked = page.evaluate(
+        """(text) => {
+            const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+            for (const checkbox of checkboxes) {
+                const container = checkbox.closest('label') || checkbox.parentElement;
+                const labelText = container ? container.textContent || '' : '';
+                if (labelText.includes(text)) {
+                    if (!checkbox.checked) checkbox.click();
+                    return true;
+                }
+            }
+            const fallback = document.querySelector('input[type="checkbox"]');
+            if (fallback && !fallback.checked) {
+                fallback.click();
+                return true;
+            }
+            return false;
+        }""",
+        agree_text,
+    )
+    if checked:
+        step_delay(page, timeouts["action"])
+    if not checked:
+        raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
+
+    fill_sender_section(page, config, timeouts)
+    step01_artifacts = write_success_artifacts(page, progress_dir, prefix=f"post_test_step01_sender_filled_{target_slug}")
+    if step01_artifacts:
+        artifacts["step01_sender_filled"] = {
+            "screenshot": str(step01_artifacts[0]),
+            "snapshot": str(step01_artifacts[1]),
+        }
+    if run_until_step_int == 1:
+        partial_artifacts = write_success_artifacts(page, progress_dir, prefix=f"post_test_partial_step01_{target_slug}")
+        if partial_artifacts:
+            artifacts["partial_step01"] = {
+                "screenshot": str(partial_artifacts[0]),
+                "snapshot": str(partial_artifacts[1]),
+            }
+        return "partial_step01", artifacts
+    click_next_button(page, config, timeouts["action"])
+
+    parcel_cfg = workflow_cfg["step_02_pickup_info"]
+    parcel_selectors_cfg = parcel_cfg.get("selectors") or {}
+    parcel_field_selectors = parcel_selectors_cfg.get("fields") or {}
+
+    if not set_select_value(
+        page,
+        parcel_field_selectors.get("wish_receipt_date", 'select[name="wishReceiptTime"]'),
+        parcel_cfg["wish_receipt_date"],
+        timeouts["action"],
+    ):
+        raise RuntimeError("방문일 선택 필드를 찾지 못했습니다.")
+    if not set_select_value(
+        page,
+        parcel_field_selectors.get("wish_receipt_time", 'select[name="wishReceiptTimeNm"]'),
+        parcel_cfg["wish_receipt_time"],
+        timeouts["action"],
+    ):
+        raise RuntimeError("방문시간 선택 필드를 찾지 못했습니다.")
+    if not set_select_value(
+        page,
+        parcel_field_selectors.get("pickup_keep", 'select[name="pickupKeep"]'),
+        parcel_cfg["pickup_keep_code"],
+        timeouts["action"],
+    ):
+        raise RuntimeError("보관방법 선택 필드를 찾지 못했습니다.")
+    set_input_value(
+        page,
+        parcel_field_selectors.get("pickup_keep_note", 'input[name="pickupKeepNm"]'),
+        parcel_cfg["pickup_keep_note"],
+        timeouts["action"],
+    )
+
+    weight_selectors = parcel_cfg.get("weight_selectors")
+    if not isinstance(weight_selectors, list) or not weight_selectors:
+        weight_selectors = [parcel_cfg.get("weight_selector"), "#limit_wg", "#tmpWght1"]
+    volume_selectors = parcel_cfg.get("volume_selectors")
+    if not isinstance(volume_selectors, list) or not volume_selectors:
+        volume_selectors = [parcel_cfg.get("volume_selector"), "#limit_vol", "#tmpVol1"]
+    product_selectors = parcel_cfg.get("product_code_selectors")
+    if not isinstance(product_selectors, list) or not product_selectors:
+        product_selectors = [parcel_cfg.get("product_code_selector"), "#labProductCode"]
+
+    set_select_value_any(
+        page,
+        weight_selectors,
+        parcel_cfg.get("weight_code"),
+        timeouts["action"],
+    )
+    set_select_value_any(
+        page,
+        volume_selectors,
+        parcel_cfg.get("volume_code"),
+        timeouts["action"],
+    )
+    set_select_value_any(
+        page,
+        product_selectors,
+        parcel_cfg.get("product_code"),
+        timeouts["action"],
+    )
+
+    pickup_save_selector = (parcel_selectors_cfg.get("buttons") or {}).get("pickup_save", "#pickupSaveBtn")
+    click_selector(page, pickup_save_selector, timeouts["action"])
+    if run_until_step_int == 2:
+        partial_artifacts = write_success_artifacts(page, progress_dir, prefix=f"post_test_partial_step02_{target_slug}")
+        if partial_artifacts:
+            artifacts["partial_step02"] = {
+                "screenshot": str(partial_artifacts[0]),
+                "snapshot": str(partial_artifacts[1]),
+            }
+        return "partial_step02", artifacts
+    pickup_next_cfg = parcel_selectors_cfg.get("next") or {}
+    pickup_next_container = pickup_next_cfg.get("container_selector", "#pickupInfoDiv")
+    pickup_next_text = pickup_next_cfg.get("text", "다음")
+    if not click_link_by_text(page, pickup_next_text, pickup_next_container, timeouts["action"]):
+        raise RuntimeError("방문접수 소포정보 다음 버튼을 찾지 못했습니다.")
+
+    recipient_cfg = workflow_cfg["step_03_recipient"]
+    if not recipient_cfg["use_address_book"]:
+        raise RuntimeError("주소록 사용이 비활성화되어 있습니다.")
+    address_book_cfg = recipient_cfg.get("address_book", {})
+    page4 = open_address_book_popup(page, config, timeouts["action"])
+    group_selectors = (address_book_cfg.get("selectors") or {}).get("group_selectors")
+    if not isinstance(group_selectors, list) or not group_selectors:
+        group_selectors = ["select"]
+    if not set_select_value_any(page4, group_selectors, recipient_cfg["address_book_group_value"], timeouts["action"]):
+        page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
+    step_delay(page4, timeouts["action"])
+    page4.on("dialog", accept_dialog_safely)
+    if not click_link_by_text(page4, address_book_cfg["confirm_text"], timeout_ms=timeouts["action"]):
+        page4.close()
+        raise RuntimeError("주소록 확인 링크를 찾지 못했습니다.")
+    step_delay(page4, timeouts["action"])
+    page4.wait_for_load_state("domcontentloaded")
+    if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
+        page4.close()
+        raise RuntimeError("주소록이 비어 있습니다.")
+    recipient_name = recipient_cfg["name"]
+    recipient_selector_fields = (recipient_cfg.get("selectors") or {}).get("fields") or {}
+    receiver_name_selector = recipient_selector_fields.get("name", 'input[name="receiverName"]')
+    receiver_check_arg = {"selector": receiver_name_selector, "token": recipient_name}
+
+    def _wait_receiver_applied(check_arg: dict, timeout_ms: int) -> bool:
+        try:
+            page.wait_for_function(
+                """(payload) => {
+                    const el = document.querySelector(payload.selector);
+                    if (!el) return false;
+                    const v = (el.value || '').toString();
+                    return v.includes(payload.token);
+                }""",
+                arg=check_arg,
+                timeout=timeout_ms,
+            )
+            return True
+        except PlaywrightTimeoutError:
+            return False
+
+    applied = False
+    for attempt in range(3):
+        if hasattr(page4, "is_closed") and page4.is_closed():
+            break
+        if attempt == 0:
+            try:
+                page4.get_by_role("link", name=recipient_name, exact=True).first.click(timeout=timeouts["popup"])
+                clicked = True
+            except PlaywrightError:
+                clicked = False
+        elif attempt == 1:
+            try:
+                page4.locator("a", has_text=recipient_name).first.click(timeout=timeouts["popup"])
+                clicked = True
+            except PlaywrightError:
+                clicked = False
+        else:
+            try:
+                clicked = bool(
+                    page4.evaluate(
+                        """(token) => {
+                            const normalize = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                            const isVisible = (el) => {
+                                if (!el) return false;
+                                const style = window.getComputedStyle(el);
+                                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                                const rect = el.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0;
+                            };
+                            const links = Array.from(document.querySelectorAll('a')).filter(isVisible);
+                            const target = links.find((a) => normalize(a.textContent).includes(token));
+                            if (!target) return false;
+                            target.click();
+                            return true;
+                        }""",
+                        recipient_name,
+                    )
+                )
+            except PlaywrightError:
+                clicked = False
+
+        if not clicked:
+            continue
+
+        step_delay(page4, timeouts["action"])
+        applied = _wait_receiver_applied(
+            receiver_check_arg,
+            timeouts["popup"],
+        )
+        if applied:
+            break
+
+    if not applied:
+        raise RuntimeError("받는 분 정보가 메인 페이지에 적용되지 않았습니다.")
+
+    try:
+        if hasattr(page4, "is_closed") and page4.is_closed():
+            pass
+        else:
+            page4.close()
+    except PlaywrightError:
+        pass
+
+    click_next_button(page, config, timeouts["action"])
+
+    handle_item_info_step_04(page, config, timeouts)
+    click_next_button(page, config, timeouts["action"])
+
+    validate_address(page, config, timeouts["action"])
+
+    recipient_list_cfg = workflow_cfg["step_05_recipient_list"]
+    recipient_list_selectors = recipient_list_cfg.get("selectors") or {}
+    list_buttons = recipient_list_selectors.get("buttons") or {}
+    img_btn_selector = list_buttons.get("img_btn", "#imgBtn")
+    addr_btn_selector = list_buttons.get("addr_btn", "#btnAddr")
+    click_selector(page, img_btn_selector, timeouts["action"])
+    click_selector(page, addr_btn_selector, timeouts["action"])
+    list_next_cfg = recipient_list_selectors.get("next") or {}
+    list_next_container = list_next_cfg.get("container_selector", "#recListNextDiv")
+    list_next_text = list_next_cfg.get("text", "다음")
+    if not click_link_by_text(page, list_next_text, list_next_container, timeouts["action"]):
+        raise RuntimeError("받는 분 목록 다음 버튼을 찾지 못했습니다.")
+
+    step_delay(page, timeouts["action"])
+
+    handle_payment_step_06(page, config, timeouts)
+    step_delay(page, timeouts["action"])
+
+    success_artifacts = write_success_artifacts(page, progress_dir, prefix=f"post_test_success_{target_slug}")
+    if success_artifacts:
+        artifacts["success"] = {
+            "screenshot": str(success_artifacts[0]),
+            "snapshot": str(success_artifacts[1]),
+        }
+    return "success", artifacts
+
+
+def write_batch_summary(progress_dir: Path, results: list[dict[str, object]]) -> Path:
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    summary_path = progress_dir / f"post_test_batch_summary_{timestamp}.json"
+    payload = {"timestamp": timestamp, "results": results}
+    summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary_path
+
+
 def run(playwright: Playwright) -> None:
     config = load_config()
-    apply_excel_overrides(config)
     epost_cfg = config["epost"]
     script_cfg = epost_cfg["script"]
     workflow_cfg = epost_cfg["workflow"]
@@ -1515,6 +1875,12 @@ def run(playwright: Playwright) -> None:
     except (TypeError, ValueError):
         run_until_step_int = None
 
+    targets = get_excel_targets(config)
+    if not targets:
+        raise ValueError("config.yaml의 input_excel.targets 또는 input_excel.filter.*.value 설정이 필요합니다.")
+
+    df, excel_path, sheet_name, mgmt_col, name_col = load_subject_dataframe_from_excel(config)
+
     browser = playwright.chromium.launch(
         headless=script_cfg["browser"]["headless"],
         args=script_cfg["browser"]["args"],
@@ -1529,278 +1895,97 @@ def run(playwright: Playwright) -> None:
         else:
             context.grant_permissions(permissions)
     attach_popup_closer(context, script_cfg["popups"]["close_url_contains"], timeouts["popup"])
-    page = context.new_page()
-    attach_dialog_handler(page, script_cfg["login"]["accept_dialog_contains"])
+    login_page = context.new_page()
+    attach_dialog_handler(login_page, script_cfg["login"]["accept_dialog_contains"])
 
+    page_for_manual_close = login_page
     error: Exception | None = None
+    results: list[dict[str, object]] = []
     try:
-        page.goto(script_cfg["urls"]["login"], wait_until="domcontentloaded")
-        page.wait_for_timeout(timeouts["page_stabilize"])
+        main_page_url = login_epost_once(login_page, config, timeouts)
 
-        login_result = remove_modal_and_login(page, config, timeouts["action"])
-        if not login_result["id_found"] or not login_result["pw_found"]:
-            raise RuntimeError("로그인 입력창을 찾지 못했습니다.")
-        if not login_result["submitted"]:
-            raise RuntimeError("로그인 제출에 실패했습니다.")
-
-        try:
-            page.wait_for_url("**/main.retrieveMainPage.comm", timeout=timeouts["login_wait"])
-        except PlaywrightTimeoutError as exc:
-            raise RuntimeError("로그인 완료 페이지로 이동하지 못했습니다.") from exc
-        step_delay(page, timeouts["action"])
-
-        navigate_to_parcel_reservation(page, config, timeouts["action"])
-        page.wait_for_timeout(timeouts["page_stabilize"])
-
-        agree_text = workflow_cfg["step_00_initial"]["agree_checkbox_text"]
-        checked = page.evaluate(
-            """(text) => {
-                const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
-                for (const checkbox of checkboxes) {
-                    const container = checkbox.closest('label') || checkbox.parentElement;
-                    const labelText = container ? container.textContent || '' : '';
-                    if (labelText.includes(text)) {
-                        if (!checkbox.checked) checkbox.click();
-                        return true;
-                    }
-                }
-                const fallback = document.querySelector('input[type="checkbox"]');
-                if (fallback && !fallback.checked) {
-                    fallback.click();
-                    return true;
-                }
-                return false;
-            }""",
-            agree_text,
-        )
-        if checked:
-            step_delay(page, timeouts["action"])
-        if not checked:
-            raise RuntimeError("필수 확인 체크박스를 선택하지 못했습니다.")
-
-        fill_sender_section(page, config, timeouts)
-        write_success_artifacts(page, progress_dir, prefix="post_test_step01_sender_filled")
-        if run_until_step_int == 1:
-            write_success_artifacts(page, progress_dir, prefix="post_test_partial_step01")
-            print("Stopped after step 01 (sender).")
-            return
-        click_next_button(page, config, timeouts["action"])
-
-        parcel_cfg = workflow_cfg["step_02_pickup_info"]
-        parcel_selectors_cfg = parcel_cfg.get("selectors") or {}
-        parcel_field_selectors = parcel_selectors_cfg.get("fields") or {}
-
-        if not set_select_value(
-            page,
-            parcel_field_selectors.get("wish_receipt_date", 'select[name="wishReceiptTime"]'),
-            parcel_cfg["wish_receipt_date"],
-            timeouts["action"],
-        ):
-            raise RuntimeError("방문일 선택 필드를 찾지 못했습니다.")
-        if not set_select_value(
-            page,
-            parcel_field_selectors.get("wish_receipt_time", 'select[name="wishReceiptTimeNm"]'),
-            parcel_cfg["wish_receipt_time"],
-            timeouts["action"],
-        ):
-            raise RuntimeError("방문시간 선택 필드를 찾지 못했습니다.")
-        if not set_select_value(
-            page,
-            parcel_field_selectors.get("pickup_keep", 'select[name="pickupKeep"]'),
-            parcel_cfg["pickup_keep_code"],
-            timeouts["action"],
-        ):
-            raise RuntimeError("보관방법 선택 필드를 찾지 못했습니다.")
-        set_input_value(
-            page,
-            parcel_field_selectors.get("pickup_keep_note", 'input[name="pickupKeepNm"]'),
-            parcel_cfg["pickup_keep_note"],
-            timeouts["action"],
-        )
-
-        weight_selectors = parcel_cfg.get("weight_selectors")
-        if not isinstance(weight_selectors, list) or not weight_selectors:
-            weight_selectors = [parcel_cfg.get("weight_selector"), "#limit_wg", "#tmpWght1"]
-        volume_selectors = parcel_cfg.get("volume_selectors")
-        if not isinstance(volume_selectors, list) or not volume_selectors:
-            volume_selectors = [parcel_cfg.get("volume_selector"), "#limit_vol", "#tmpVol1"]
-        product_selectors = parcel_cfg.get("product_code_selectors")
-        if not isinstance(product_selectors, list) or not product_selectors:
-            product_selectors = [parcel_cfg.get("product_code_selector"), "#labProductCode"]
-
-        set_select_value_any(
-            page,
-            weight_selectors,
-            parcel_cfg.get("weight_code"),
-            timeouts["action"],
-        )
-        set_select_value_any(
-            page,
-            volume_selectors,
-            parcel_cfg.get("volume_code"),
-            timeouts["action"],
-        )
-        set_select_value_any(
-            page,
-            product_selectors,
-            parcel_cfg.get("product_code"),
-            timeouts["action"],
-        )
-
-        pickup_save_selector = (parcel_selectors_cfg.get("buttons") or {}).get("pickup_save", "#pickupSaveBtn")
-        click_selector(page, pickup_save_selector, timeouts["action"])
-        if run_until_step_int == 2:
-            write_success_artifacts(page, progress_dir, prefix="post_test_partial_step02")
-            print("Stopped after step 02 (pickup info).")
-            return
-        pickup_next_cfg = parcel_selectors_cfg.get("next") or {}
-        pickup_next_container = pickup_next_cfg.get("container_selector", "#pickupInfoDiv")
-        pickup_next_text = pickup_next_cfg.get("text", "다음")
-        if not click_link_by_text(page, pickup_next_text, pickup_next_container, timeouts["action"]):
-            raise RuntimeError("방문접수 소포정보 다음 버튼을 찾지 못했습니다.")
-
-        recipient_cfg = workflow_cfg["step_03_recipient"]
-        if not recipient_cfg["use_address_book"]:
-            raise RuntimeError("주소록 사용이 비활성화되어 있습니다.")
-        address_book_cfg = recipient_cfg.get("address_book", {})
-        page4 = open_address_book_popup(page, config, timeouts["action"])
-        group_selectors = (address_book_cfg.get("selectors") or {}).get("group_selectors")
-        if not isinstance(group_selectors, list) or not group_selectors:
-            group_selectors = ["select"]
-        if not set_select_value_any(page4, group_selectors, recipient_cfg["address_book_group_value"], timeouts["action"]):
-            page4.locator("select").first.select_option(recipient_cfg["address_book_group_value"])
-        step_delay(page4, timeouts["action"])
-        page4.on("dialog", accept_dialog_safely)
-        if not click_link_by_text(page4, address_book_cfg["confirm_text"], timeout_ms=timeouts["action"]):
-            page4.close()
-            raise RuntimeError("주소록 확인 링크를 찾지 못했습니다.")
-        step_delay(page4, timeouts["action"])
-        page4.wait_for_load_state("domcontentloaded")
-        if address_book_is_empty(page4, address_book_cfg["empty_text_contains"]):
-            page4.close()
-            raise RuntimeError("주소록이 비어 있습니다.")
-        recipient_name = recipient_cfg["name"]
-        recipient_selector_fields = (recipient_cfg.get("selectors") or {}).get("fields") or {}
-        receiver_name_selector = recipient_selector_fields.get("name", 'input[name="receiverName"]')
-        receiver_check_arg = {"selector": receiver_name_selector, "token": recipient_name}
-
-        def _wait_receiver_applied(check_arg: dict, timeout_ms: int) -> bool:
-            try:
-                page.wait_for_function(
-                    """(payload) => {
-                        const el = document.querySelector(payload.selector);
-                        if (!el) return false;
-                        const v = (el.value || '').toString();
-                        return v.includes(payload.token);
-                    }""",
-                    arg=check_arg,
-                    timeout=timeout_ms,
-                )
-                return True
-            except PlaywrightTimeoutError:
-                return False
-
-        applied = False
-        for attempt in range(3):
-            if hasattr(page4, "is_closed") and page4.is_closed():
-                break
-            if attempt == 0:
-                try:
-                    page4.get_by_role("link", name=recipient_name, exact=True).first.click(timeout=timeouts["popup"])
-                    clicked = True
-                except PlaywrightError:
-                    clicked = False
-            elif attempt == 1:
-                try:
-                    page4.locator("a", has_text=recipient_name).first.click(timeout=timeouts["popup"])
-                    clicked = True
-                except PlaywrightError:
-                    clicked = False
-            else:
-                try:
-                    clicked = bool(
-                        page4.evaluate(
-                            """(token) => {
-                                const normalize = (s) => (s || '').replace(/\\s+/g, ' ').trim();
-                                const isVisible = (el) => {
-                                    if (!el) return false;
-                                    const style = window.getComputedStyle(el);
-                                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-                                    const rect = el.getBoundingClientRect();
-                                    return rect.width > 0 && rect.height > 0;
-                                };
-                                const links = Array.from(document.querySelectorAll('a')).filter(isVisible);
-                                const target = links.find((a) => normalize(a.textContent).includes(token));
-                                if (!target) return false;
-                                target.click();
-                                return true;
-                            }""",
-                            recipient_name,
-                        )
-                    )
-                except PlaywrightError:
-                    clicked = False
-
-            if not clicked:
-                continue
-
-            step_delay(page4, timeouts["action"])
-            applied = _wait_receiver_applied(
-                receiver_check_arg,
-                timeouts["popup"],
+        for idx, target in enumerate(targets, start=1):
+            mgmt_value = target["management_no"]
+            name_value = target["subject_name"]
+            target_slug = (
+                f"{idx:03d}_{safe_filename_token(mgmt_value, max_len=20)}_{safe_filename_token(name_value, max_len=20)}"
             )
-            if applied:
-                break
+            print(f"[{idx}/{len(targets)}] start: 관리번호={mgmt_value} / 이름={name_value}")
 
-        if not applied:
-            raise RuntimeError("받는 분 정보가 메인 페이지에 적용되지 않았습니다.")
+            page = context.new_page()
+            page_for_manual_close = page
+            attach_dialog_handler(page, script_cfg["login"]["accept_dialog_contains"])
+            try:
+                open_parcel_reservation_page(page, config, timeouts, main_page_url)
 
-        try:
-            if hasattr(page4, "is_closed") and page4.is_closed():
-                pass
-            else:
-                page4.close()
-        except PlaywrightError:
-            pass
+                row = load_subject_row_from_dataframe(
+                    df,
+                    mgmt_col,
+                    name_col,
+                    mgmt_value,
+                    name_value,
+                    excel_path,
+                    sheet_name,
+                )
+                apply_excel_overrides(config, row=row, target=target)
 
-        click_next_button(page, config, timeouts["action"])
+                status, artifacts = run_parcel_reservation_flow(
+                    page,
+                    config,
+                    timeouts,
+                    progress_dir,
+                    run_until_step_int,
+                    target_slug,
+                )
+                results.append(
+                    {
+                        "index": idx,
+                        "management_no": mgmt_value,
+                        "subject_name": name_value,
+                        "status": status,
+                        "artifacts": artifacts,
+                    }
+                )
+                print(f"[{idx}/{len(targets)}] done: {status}")
+            except Exception as exc:
+                failure_prefix = script_cfg["paths"]["failure_screenshot_prefix"]
+                failure_artifacts = write_success_artifacts(page, progress_dir, prefix=f"{failure_prefix}_{target_slug}")
+                artifacts: dict[str, dict[str, str]] = {}
+                if failure_artifacts:
+                    artifacts["failure"] = {
+                        "screenshot": str(failure_artifacts[0]),
+                        "snapshot": str(failure_artifacts[1]),
+                    }
+                results.append(
+                    {
+                        "index": idx,
+                        "management_no": mgmt_value,
+                        "subject_name": name_value,
+                        "status": "failure",
+                        "error": str(exc),
+                        "artifacts": artifacts,
+                    }
+                )
+                print(f"[{idx}/{len(targets)}] failed: {exc}")
+            finally:
+                if keep_open_after_run and idx == len(targets):
+                    continue
+                try:
+                    page.close()
+                except PlaywrightError:
+                    pass
 
-        handle_item_info_step_04(page, config, timeouts)
-        click_next_button(page, config, timeouts["action"])
+        summary_path = write_batch_summary(progress_dir, results)
+        print(f"Batch summary saved: {summary_path}")
 
-        validate_address(page, config, timeouts["action"])
-
-        recipient_list_cfg = workflow_cfg["step_05_recipient_list"]
-        recipient_list_selectors = recipient_list_cfg.get("selectors") or {}
-        list_buttons = recipient_list_selectors.get("buttons") or {}
-        img_btn_selector = list_buttons.get("img_btn", "#imgBtn")
-        addr_btn_selector = list_buttons.get("addr_btn", "#btnAddr")
-        click_selector(page, img_btn_selector, timeouts["action"])
-        click_selector(page, addr_btn_selector, timeouts["action"])
-        list_next_cfg = recipient_list_selectors.get("next") or {}
-        list_next_container = list_next_cfg.get("container_selector", "#recListNextDiv")
-        list_next_text = list_next_cfg.get("text", "다음")
-        if not click_link_by_text(page, list_next_text, list_next_container, timeouts["action"]):
-            raise RuntimeError("받는 분 목록 다음 버튼을 찾지 못했습니다.")
-
-        step_delay(page, timeouts["action"])
-
-        handle_payment_step_06(page, config, timeouts)
-        step_delay(page, timeouts["action"])
-
-        write_success_artifacts(page, progress_dir, prefix="post_test_success")
-        print("Test completed successfully!")
+        failed = [row for row in results if row.get("status") == "failure"]
+        if failed:
+            raise RuntimeError(f"일부 대상자 실패: {len(failed)}건 (summary={summary_path})")
+        print("Batch completed successfully!")
     except Exception as exc:
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        screenshot_name = f"{script_cfg['paths']['failure_screenshot_prefix']}_{timestamp}.png"
-        screenshot_path = progress_dir / screenshot_name
-        try:
-            page.screenshot(path=str(screenshot_path), full_page=True)
-        except Exception:
-            pass
         error = exc
     finally:
-        wait_for_manual_close(page, keep_open_after_run, keep_open_poll_ms)
+        wait_for_manual_close(page_for_manual_close, keep_open_after_run, keep_open_poll_ms)
         context.close()
         browser.close()
     if error:
