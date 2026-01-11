@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from datetime import date, datetime
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 import yaml
 from playwright.sync_api import Error as PlaywrightError
@@ -47,6 +49,173 @@ def resolve_repo_path(value: str | Path) -> Path:
     if not path.is_absolute():
         path = ROOT / path
     return path
+
+
+def strip_parenthesized_text(value: str) -> str:
+    return re.sub(r"\([^)]*\)", " ", value or "").strip()
+
+
+def read_juso_confm_key_from_markdown(value: str) -> str | None:
+    match = re.search(r"<승인키>\s*(.*?)\s*</승인키>", value or "", re.S)
+    if not match:
+        return None
+    token = str(match.group(1) or "").strip()
+    return token or None
+
+
+def resolve_juso_confm_key(config: dict) -> str:
+    juso_cfg = ((config.get("epost") or {}).get("script") or {}).get("juso_api") or {}
+
+    env_name = str(juso_cfg.get("confm_key_env") or "").strip()
+    if env_name:
+        env_value = str(os.getenv(env_name) or "").strip()
+        if env_value:
+            return env_value
+
+    fallback_path_value = str(juso_cfg.get("confm_key_fallback_path") or "").strip()
+    if fallback_path_value:
+        fallback_path = resolve_repo_path(fallback_path_value)
+        if fallback_path.exists():
+            token = read_juso_confm_key_from_markdown(
+                fallback_path.read_text(encoding="utf-8")
+            )
+            if token:
+                return token
+
+    raise RuntimeError(
+        "Juso API 승인키(confmKey)를 찾지 못했습니다. "
+        f"환경변수({env_name or 'JUSO_CONFM_KEY'}) 또는 {fallback_path_value or 'juso.api/README_juso.md'}의 <승인키>를 확인하세요."
+    )
+
+
+def sanitize_juso_keyword(value: str) -> str:
+    keyword = normalize_spaces(str(value or ""))
+    keyword = strip_parenthesized_text(keyword)
+    keyword = re.sub(r"[%=<>]", " ", keyword)
+    return normalize_spaces(keyword)
+
+
+def load_json_dict(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_json_dict(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def build_juso_result_token(juso_item: dict) -> str:
+    rn = normalize_spaces(str(juso_item.get("rn") or "")).strip()
+    buld_mnnm = normalize_spaces(str(juso_item.get("buldMnnm") or "")).strip()
+    buld_slno = normalize_spaces(str(juso_item.get("buldSlno") or "")).strip()
+    if rn and buld_mnnm:
+        suffix = f"-{buld_slno}" if buld_slno and buld_slno != "0" else ""
+        return compact_spaces(f"{rn} {buld_mnnm}{suffix}")
+    road_addr = normalize_spaces(
+        str(juso_item.get("roadAddrPart1") or juso_item.get("roadAddr") or "")
+    ).strip()
+    return compact_spaces(road_addr)
+
+
+def juso_address_search(config: dict, keyword: str) -> dict[str, str] | None:
+    script_cfg = (config.get("epost") or {}).get("script") or {}
+    juso_cfg = script_cfg.get("juso_api") or {}
+    if not isinstance(juso_cfg, dict) or not juso_cfg.get("enabled", False):
+        return None
+
+    base_url = str(juso_cfg.get("base_url") or "").strip()
+    if not base_url:
+        raise ValueError("config.yaml의 epost.script.juso_api.base_url 설정이 비어 있습니다.")
+
+    sanitized_keyword = sanitize_juso_keyword(keyword)
+    if not sanitized_keyword:
+        return None
+
+    cache_path_value = str(juso_cfg.get("cache_path") or "").strip()
+    cache_path = resolve_repo_path(cache_path_value) if cache_path_value else None
+    cache_key = compact_spaces(sanitized_keyword)
+    cache: dict = {}
+    if cache_path:
+        cache = load_json_dict(cache_path)
+        if cache_key in cache and isinstance(cache.get(cache_key), dict):
+            cached = cache[cache_key]
+            return {k: str(v) for k, v in cached.items() if v is not None}
+
+    confm_key = resolve_juso_confm_key(config)
+
+    count_per_page = juso_cfg.get("count_per_page", 10)
+    try:
+        count_per_page_int = int(count_per_page)
+    except (TypeError, ValueError):
+        count_per_page_int = 10
+    count_per_page_int = max(1, min(100, count_per_page_int))
+
+    timeout_ms = juso_cfg.get("timeout_ms", 15000)
+    try:
+        timeout_ms_int = int(timeout_ms)
+    except (TypeError, ValueError):
+        timeout_ms_int = 15000
+    timeout_s = max(1.0, timeout_ms_int / 1000.0)
+
+    params = {
+        "confmKey": confm_key,
+        "keyword": sanitized_keyword,
+        "currentPage": 1,
+        "countPerPage": count_per_page_int,
+        "resultType": str(juso_cfg.get("result_type") or "json").strip() or "json",
+    }
+    request_url = f"{base_url}?{urlencode(params)}"
+    req = Request(request_url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(req, timeout=timeout_s) as response:
+        payload_text = response.read().decode("utf-8")
+    data = json.loads(payload_text)
+
+    results = data.get("results") if isinstance(data, dict) else None
+    common = (results or {}).get("common") if isinstance(results, dict) else None
+    error_code = str((common or {}).get("errorCode") or "").strip()
+    if error_code != "0":
+        error_message = str((common or {}).get("errorMessage") or "").strip()
+        raise RuntimeError(f"Juso 주소검색 실패(errorCode={error_code}): {error_message}")
+
+    juso_list = (results or {}).get("juso") if isinstance(results, dict) else None
+    if not isinstance(juso_list, list) or not juso_list:
+        return None
+
+    selected = juso_list[0]
+    if not isinstance(selected, dict):
+        return None
+
+    record: dict[str, str] = {}
+    for field in (
+        "roadAddr",
+        "roadAddrPart1",
+        "roadAddrPart2",
+        "jibunAddr",
+        "zipNo",
+        "rn",
+        "buldMnnm",
+        "buldSlno",
+        "bdNm",
+        "siNm",
+        "sggNm",
+        "emdNm",
+    ):
+        value = selected.get(field)
+        if value is None:
+            continue
+        record[field] = str(value)
+    record["result_text_contains"] = build_juso_result_token(selected)
+
+    if cache_path:
+        cache[cache_key] = record
+        save_json_dict(cache_path, cache)
+    return record
 
 
 def parse_sender_phone_parts(value: object) -> tuple[str, str]:
@@ -110,23 +279,40 @@ def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
     if not raw:
         raise ValueError("택배 회수장소 주소 값이 비어 있습니다.")
 
-    building_match = re.search(r"(\d{1,4})\s*동", raw)
-    unit_match = re.search(r"(\d{1,4})\s*호", raw)
-    building = building_match.group(1) if building_match else None
+    unit_match = None
+    for match in re.finditer(r"(\d{1,4})\s*호", raw):
+        unit_match = match
     unit = unit_match.group(1) if unit_match else None
+
+    building: str | None = None
+    if unit_match:
+        unit_pos = unit_match.start()
+        building_candidates = [
+            m
+            for m in re.finditer(r"((?:\d{1,4}|[A-Za-z]|[가-힣]))\s*동", raw)
+            if m.start() < unit_pos
+        ]
+        if building_candidates:
+            closest = min(building_candidates, key=lambda m: unit_pos - m.start())
+            building = closest.group(1)
+    else:
+        building_match = re.search(r"(\d{1,4})\s*동", raw)
+        building = building_match.group(1) if building_match else None
 
     keyword = raw.split(",", 1)[0].strip()
     if not keyword:
         keyword = raw
 
-    details_match = re.search(r"\d{1,4}\s*동", keyword)
-    if details_match:
-        keyword = keyword[: details_match.start()].strip().rstrip(",")
-    details_match = re.search(r"\d{1,4}\s*호", keyword)
-    if details_match:
-        keyword = keyword[: details_match.start()].strip().rstrip(",")
+    if building:
+        details_match = re.search(re.escape(building) + r"\s*동", keyword)
+        if details_match:
+            keyword = keyword[: details_match.start()].strip().rstrip(",")
+    if unit:
+        details_match = re.search(re.escape(unit) + r"\s*호", keyword)
+        if details_match:
+            keyword = keyword[: details_match.start()].strip().rstrip(",")
 
-    road_pattern = r"[가-힣0-9]+(?:로|길|대로)\s*\d+(?:-\d+)?(?:\s*번길\s*\d+(?:-\d+)?)?"
+    road_pattern = r"[가-힣0-9]+(?:로|길|대로)\s*\d+(?:-\d+)?(?:\s*번길\s*\d+(?:-\d+)?)?(?=$|[,\s(])"
     road_match = re.search(road_pattern, keyword) or re.search(road_pattern, raw)
     if road_match:
         result_token = compact_spaces(road_match.group(0))
@@ -140,6 +326,44 @@ def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
         "building": building,
         "unit": unit,
     }
+
+
+def looks_like_road_token(value: str) -> bool:
+    token = compact_spaces(str(value or ""))
+    if not token:
+        return False
+    road_token_pattern = (
+        r"[가-힣0-9]+(?:로|길|대로)\d+(?:-\d+)?(?:번길\d+(?:-\d+)?)?"
+    )
+    return re.fullmatch(road_token_pattern, token) is not None
+
+
+def parse_pickup_address(value: object, config: dict) -> dict[str, str | None]:
+    rule = parse_pickup_address_rule(value)
+    token = str(rule.get("result_text_contains") or "").strip()
+    if looks_like_road_token(token):
+        return rule
+
+    keyword = str(rule.get("keyword") or rule.get("raw") or "").strip()
+    if not keyword:
+        return rule
+
+    try:
+        juso_record = juso_address_search(config, keyword)
+    except Exception:
+        juso_record = None
+
+    if not juso_record:
+        return rule
+
+    road_keyword = str(juso_record.get("roadAddrPart1") or juso_record.get("roadAddr") or "").strip()
+    if road_keyword:
+        rule["keyword"] = road_keyword
+
+    result_text_contains = str(juso_record.get("result_text_contains") or "").strip()
+    if result_text_contains:
+        rule["result_text_contains"] = result_text_contains
+    return rule
 
 
 def get_excel_targets(config: dict) -> list[dict[str, str]]:
@@ -293,7 +517,7 @@ def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str
 
     # Shared address_popup 오버라이드
     try:
-        pickup_rule = parse_pickup_address_rule(pickup_address)
+        pickup_rule = parse_pickup_address(pickup_address, config)
     except ValueError:
         pickup_rule = {}
 
@@ -1994,5 +2218,10 @@ def run(playwright: Playwright) -> None:
         raise error
 
 
-with sync_playwright() as playwright:
-    run(playwright)
+def main() -> None:
+    with sync_playwright() as playwright:
+        run(playwright)
+
+
+if __name__ == "__main__":
+    main()

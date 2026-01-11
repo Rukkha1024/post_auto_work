@@ -27,3 +27,7 @@ report/
 Archive/*
 !Archive/*.md
 
+# runtime artifacts (do not commit)
+progress/post_test_batch_summary_*.json
+progress/juso_cache.json
+
