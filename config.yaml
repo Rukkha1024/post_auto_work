@@ -72,6 +72,7 @@ epost:
         column: "대상자 이름"
         value: "김미선"
     columns:
+      sender_name: "대상자 이름"
       sender_contact: "대상자연락처"
       wish_receipt_date: "희망 회수 방문일"
       pickup_address: "택배 회수장소 주소"
@@ -168,6 +169,8 @@ epost:
       submit_text_contains: "주소입력"
 
     sender:
+      name_label_contains:
+        - "이름"
       phone:
         middle: "3532"
         last: "1342"

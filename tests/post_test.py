@@ -180,11 +180,25 @@ def apply_excel_overrides(config: dict) -> None:
 
     row = load_subject_row_from_excel(config)
     columns_cfg = excel_cfg.get("columns") or {}
+    sender_name_col = columns_cfg.get("sender_name")
     contact_col = columns_cfg.get("sender_contact")
     wish_date_col = columns_cfg.get("wish_receipt_date")
     pickup_address_col = columns_cfg.get("pickup_address")
     if not contact_col or not wish_date_col or not pickup_address_col:
         raise ValueError("config.yaml의 epost.input_excel.columns 설정이 올바르지 않습니다.")
+
+    sender_name_value: object | None = None
+    if sender_name_col:
+        sender_name_value = row.get(str(sender_name_col))
+    else:
+        filter_cfg = excel_cfg.get("filter") or {}
+        fallback_name_cfg = filter_cfg.get("subject_name") or {}
+        fallback_col = fallback_name_cfg.get("column")
+        if fallback_col:
+            sender_name_value = row.get(str(fallback_col))
+        else:
+            sender_name_value = fallback_name_cfg.get("value")
+    sender_name = normalize_spaces(str(sender_name_value or "")).strip()
 
     sender_middle, sender_last = parse_sender_phone_parts(row.get(str(contact_col)))
     wish_receipt_date = parse_ymd_date(row.get(str(wish_date_col)))
@@ -194,6 +208,8 @@ def apply_excel_overrides(config: dict) -> None:
 
     process_cfg = epost_cfg.get("working_process") or {}
     sender_cfg = process_cfg.get("sender") or {}
+    if sender_name:
+        sender_cfg["name"] = sender_name
     sender_phone_cfg = sender_cfg.get("phone") or {}
     sender_phone_cfg["middle"] = sender_middle
     sender_phone_cfg["last"] = sender_last
@@ -570,6 +586,101 @@ def set_input_by_label_tokens(page, label_tokens: list[str], value: str, timeout
             return true;
         }""",
         {"tokens": label_tokens, "value": value},
+    )
+    if updated:
+        step_delay(page, timeout_ms)
+    return updated
+
+
+def set_input_by_associated_text_tokens(page, text_tokens: list[str], value: str, timeout_ms: int | None = None) -> bool:
+    if value is None or not text_tokens:
+        return False
+    updated = page.evaluate(
+        """(payload) => {
+            const tokensRaw = Array.isArray(payload.tokens) ? payload.tokens : [payload.tokens];
+            const tokens = tokensRaw.map((t) => (t ?? '').toString()).filter(Boolean);
+            if (!tokens.length) return false;
+
+            const value = (payload.value ?? '').toString();
+            const normalize = (s) => (s || '').toString().replace(/\\s+/g, '').trim();
+            const tokenNorm = tokens.map(normalize).filter(Boolean);
+            if (!tokenNorm.length) return false;
+
+            const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+
+            const escapeCss = (value) => {
+                try {
+                    if (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') return CSS.escape(value);
+                } catch (e) {}
+                return value.replace(/\"/g, '\\\\\"');
+            };
+
+            const assocText = (el) => {
+                const attrs = [
+                    el.getAttribute('aria-label') || '',
+                    el.getAttribute('title') || '',
+                    el.getAttribute('placeholder') || '',
+                ].join(' ').trim();
+                if (attrs) return attrs;
+
+                const id = el.getAttribute('id') || '';
+                if (id) {
+                    const label = document.querySelector(`label[for=\"${escapeCss(id)}\"]`);
+                    if (label) return (label.textContent || '').toString();
+                }
+
+                const parentLabel = el.closest('label');
+                if (parentLabel) return (parentLabel.textContent || '').toString();
+
+                const row = el.closest('tr');
+                if (row) {
+                    const header = row.querySelector('th') || row.querySelector('td');
+                    if (header) return (header.textContent || '').toString();
+                }
+
+                const container = el.closest('td, div, li');
+                if (container) {
+                    let prev = container.previousElementSibling;
+                    while (prev) {
+                        const txt = (prev.textContent || '').toString().trim();
+                        if (txt) return txt;
+                        prev = prev.previousElementSibling;
+                    }
+                }
+
+                return '';
+            };
+
+            const candidates = Array.from(document.querySelectorAll('input, textarea')).filter((el) => {
+                const tag = (el.tagName || '').toLowerCase();
+                if (tag === 'textarea') return true;
+                if (tag !== 'input') return false;
+                const type = ((el.getAttribute('type') || 'text') + '').toLowerCase();
+                return type === 'text' || type === 'tel' || type === 'search' || type === '';
+            });
+
+            for (const el of candidates) {
+                if (!isVisible(el)) continue;
+                const text = assocText(el);
+                const normalized = normalize(text);
+                if (!normalized) continue;
+                if (!tokenNorm.some((token) => normalized.includes(token))) continue;
+
+                el.value = value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+            }
+
+            return false;
+        }""",
+        {"tokens": text_tokens, "value": value},
     )
     if updated:
         step_delay(page, timeout_ms)
@@ -1297,6 +1408,7 @@ def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
 def fill_sender_section(page, config: dict, timeouts: dict) -> None:
     process_cfg = config["epost"]["working_process"]
     sender_cfg = process_cfg["sender"]
+    sender_name = normalize_spaces(str(sender_cfg.get("name") or "")).strip()
     page2 = open_address_popup(page, config, timeouts["action"], target="sender")
     attach_dialog_handler(page2, config["epost"]["script"]["login"]["accept_dialog_contains"])
     fill_address_popup(page2, config, timeouts["action"])
@@ -1305,6 +1417,21 @@ def fill_sender_section(page, config: dict, timeouts: dict) -> None:
         page2.close()
     except PlaywrightError:
         pass
+    if sender_name:
+        selector_fields = (sender_cfg.get("selectors") or {}).get("fields") or {}
+        name_selector = selector_fields.get("name")
+        updated = False
+        if name_selector:
+            updated = set_input_value(page, name_selector, sender_name, timeouts["action"])
+        if not updated:
+            label_tokens = sender_cfg.get("name_label_contains") or ["이름"]
+            if isinstance(label_tokens, str):
+                label_tokens = [label_tokens]
+            if not isinstance(label_tokens, list) or not label_tokens:
+                label_tokens = ["이름"]
+            label_tokens = [str(token) for token in label_tokens if str(token).strip()]
+            if not set_input_by_associated_text_tokens(page, label_tokens, sender_name, timeouts["action"]):
+                raise RuntimeError("보내는 분 이름 입력 필드를 찾지 못했습니다.")
     set_input_value(
         page,
         sender_cfg["phone_selectors"]["middle"],
