@@ -132,17 +132,17 @@ def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
 
 
 def load_subject_row_from_excel(config: dict) -> dict[str, object]:
-    epost_cfg = config.get("epost") or {}
-    excel_cfg = epost_cfg.get("input_excel") or {}
+    # input_excel이 최상위 레벨로 이동됨
+    excel_cfg = config.get("input_excel") or {}
     if not excel_cfg:
-        raise ValueError("config.yaml의 epost.input_excel 설정이 없습니다.")
+        raise ValueError("config.yaml의 input_excel 설정이 없습니다.")
 
     excel_path = resolve_repo_path(excel_cfg.get("path") or "")
     sheet_name = excel_cfg.get("sheet_name")
     if not excel_path.exists():
         raise FileNotFoundError(f"엑셀 파일을 찾지 못했습니다: {excel_path}")
     if not sheet_name:
-        raise ValueError("config.yaml의 epost.input_excel.sheet_name 설정이 비어 있습니다.")
+        raise ValueError("config.yaml의 input_excel.sheet_name 설정이 비어 있습니다.")
 
     import polars as pl
 
@@ -155,9 +155,9 @@ def load_subject_row_from_excel(config: dict) -> dict[str, object]:
     name_col = name_cfg.get("column")
     name_value = str(name_cfg.get("value") or "").strip()
     if not mgmt_col or not mgmt_value:
-        raise ValueError("config.yaml의 epost.input_excel.filter.management_no 설정이 올바르지 않습니다.")
+        raise ValueError("config.yaml의 input_excel.filter.management_no 설정이 올바르지 않습니다.")
     if not name_col or not name_value:
-        raise ValueError("config.yaml의 epost.input_excel.filter.subject_name 설정이 올바르지 않습니다.")
+        raise ValueError("config.yaml의 input_excel.filter.subject_name 설정이 올바르지 않습니다.")
 
     filtered = df.filter(
         (pl.col(str(mgmt_col)).cast(pl.Utf8).str.strip_chars() == mgmt_value)
@@ -173,8 +173,8 @@ def load_subject_row_from_excel(config: dict) -> dict[str, object]:
 
 
 def apply_excel_overrides(config: dict) -> None:
-    epost_cfg = config.get("epost") or {}
-    excel_cfg = epost_cfg.get("input_excel") or {}
+    # input_excel이 최상위 레벨로 이동됨
+    excel_cfg = config.get("input_excel") or {}
     if not excel_cfg:
         return
 
@@ -185,7 +185,7 @@ def apply_excel_overrides(config: dict) -> None:
     wish_date_col = columns_cfg.get("wish_receipt_date")
     pickup_address_col = columns_cfg.get("pickup_address")
     if not contact_col or not wish_date_col or not pickup_address_col:
-        raise ValueError("config.yaml의 epost.input_excel.columns 설정이 올바르지 않습니다.")
+        raise ValueError("config.yaml의 input_excel.columns 설정이 올바르지 않습니다.")
 
     sender_name_value: object | None = None
     if sender_name_col:
@@ -206,20 +206,26 @@ def apply_excel_overrides(config: dict) -> None:
     if not pickup_address:
         raise ValueError("엑셀의 택배 회수장소 주소 값이 비어 있습니다.")
 
-    process_cfg = epost_cfg.get("working_process") or {}
-    sender_cfg = process_cfg.get("sender") or {}
+    # working_process에서 workflow로 변경됨
+    epost_cfg = config.get("epost") or {}
+    workflow_cfg = epost_cfg.get("workflow") or {}
+
+    # Step 01 sender 오버라이드
+    sender_cfg = workflow_cfg.get("step_01_sender") or {}
     if sender_name:
         sender_cfg["name"] = sender_name
     sender_phone_cfg = sender_cfg.get("phone") or {}
     sender_phone_cfg["middle"] = sender_middle
     sender_phone_cfg["last"] = sender_last
     sender_cfg["phone"] = sender_phone_cfg
-    process_cfg["sender"] = sender_cfg
+    workflow_cfg["step_01_sender"] = sender_cfg
 
-    parcel_cfg = process_cfg.get("parcel") or {}
-    parcel_cfg["wish_receipt_date"] = wish_receipt_date
-    process_cfg["parcel"] = parcel_cfg
+    # Step 02 pickup_info 오버라이드
+    pickup_cfg = workflow_cfg.get("step_02_pickup_info") or {}
+    pickup_cfg["wish_receipt_date"] = wish_receipt_date
+    workflow_cfg["step_02_pickup_info"] = pickup_cfg
 
+    # Shared address_popup 오버라이드
     try:
         pickup_rule = parse_pickup_address_rule(pickup_address)
     except ValueError:
@@ -227,7 +233,8 @@ def apply_excel_overrides(config: dict) -> None:
 
     keyword = str(pickup_rule.get("keyword") or "").strip()
     if keyword and re.search(r"\d", keyword):
-        popup_cfg = process_cfg.get("address_popup") or {}
+        shared_cfg = workflow_cfg.get("shared") or {}
+        popup_cfg = shared_cfg.get("address_popup") or {}
         popup_cfg["keyword"] = keyword
         popup_cfg["result_text_contains"] = str(pickup_rule.get("result_text_contains") or "").strip() or compact_spaces(
             keyword
@@ -241,9 +248,10 @@ def apply_excel_overrides(config: dict) -> None:
         else:
             popup_cfg.pop("building", None)
             popup_cfg.pop("unit", None)
-        process_cfg["address_popup"] = popup_cfg
+        shared_cfg["address_popup"] = popup_cfg
+        workflow_cfg["shared"] = shared_cfg
 
-    epost_cfg["working_process"] = process_cfg
+    epost_cfg["workflow"] = workflow_cfg
     config["epost"] = epost_cfg
 
 
@@ -854,8 +862,8 @@ def click_cell_by_text(page, text: str, timeout_ms: int | None = None) -> bool:
 
 
 def click_next_button(page, config: dict, timeout_ms: int | None = None) -> None:
-    process_cfg = config["epost"]["working_process"]
-    next_cfg = process_cfg["next_button"]
+    workflow_cfg = config["epost"]["workflow"]
+    next_cfg = workflow_cfg["shared"]["next_button"]
     preferred_selectors = next_cfg.get("preferred_selectors", [])
     for selector in preferred_selectors:
         if click_selector(page, selector, timeout_ms):
@@ -984,8 +992,8 @@ def attach_popup_closer(context, url_contains: list[str], timeout_ms: int) -> No
 
 
 def navigate_to_parcel_reservation(page, config: dict, timeout_ms: int | None = None) -> None:
-    process_cfg = config["epost"]["working_process"]
-    nav_cfg = process_cfg["navigation"]
+    workflow_cfg = config["epost"]["workflow"]
+    nav_cfg = workflow_cfg["shared"]["navigation"]
     for step_cfg in nav_cfg["menu_steps"]:
         clicked = click_link_by_text_index(
             page,
@@ -1002,8 +1010,8 @@ def toggle_address_popup_trigger(
     page, config: dict, click: bool, timeout_ms: int | None = None, target: str = "sender"
 ) -> bool:
     epost_cfg = config["epost"]
-    process_cfg = epost_cfg["working_process"]
-    popup_cfg = process_cfg["address_popup"]
+    workflow_cfg = epost_cfg["workflow"]
+    popup_cfg = workflow_cfg["shared"]["address_popup"]
     onclick_contains = None
     trigger_map = popup_cfg.get("trigger_onclick_contains_by_target", {})
     if isinstance(trigger_map, dict):
@@ -1063,9 +1071,11 @@ def toggle_address_popup_trigger(
 
 def open_address_popup(page, config: dict, timeout_ms: int, target: str = "sender"):
     epost_cfg = config["epost"]
-    process_cfg = epost_cfg["working_process"]
-    sections_cfg = process_cfg.get("sections", {})
-    heading = sections_cfg.get(target, {}).get("heading_text_contains")
+    workflow_cfg = epost_cfg["workflow"]
+    # target에 따라 적절한 step config 선택
+    step_key = "step_01_sender" if target == "sender" else "step_03_recipient"
+    step_cfg = workflow_cfg.get(step_key, {})
+    heading = step_cfg.get("heading_text_contains")
     if heading:
         ensure_section_open(page, heading, timeout_ms)
 
@@ -1083,8 +1093,8 @@ def open_address_popup(page, config: dict, timeout_ms: int, target: str = "sende
 
 def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
     epost_cfg = config["epost"]
-    process_cfg = epost_cfg["working_process"]
-    popup_cfg = process_cfg["address_popup"]
+    workflow_cfg = epost_cfg["workflow"]
+    popup_cfg = workflow_cfg["shared"]["address_popup"]
     keyword_selector = popup_cfg["keyword_selector"]
     page.locator(keyword_selector).fill(popup_cfg["keyword"])
     step_delay(page, timeout_ms)
@@ -1198,12 +1208,12 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
 
 def open_address_book_popup(page, config: dict, timeout_ms: int):
     epost_cfg = config["epost"]
-    process_cfg = epost_cfg["working_process"]
-    sections_cfg = process_cfg.get("sections", {})
-    recipient_heading = sections_cfg.get("recipient", {}).get("heading_text_contains")
+    workflow_cfg = epost_cfg["workflow"]
+    recipient_cfg = workflow_cfg.get("step_03_recipient", {})
+    recipient_heading = recipient_cfg.get("heading_text_contains")
     if recipient_heading:
         ensure_section_open(page, recipient_heading, timeout_ms)
-    address_book_cfg = process_cfg["address_book"]
+    address_book_cfg = recipient_cfg.get("address_book", {})
     popup_timeout_ms = epost_cfg["script"]["timeouts_ms"]["popup"]
     try:
         with page.expect_popup(timeout=popup_timeout_ms) as popup_info:
@@ -1216,9 +1226,9 @@ def open_address_book_popup(page, config: dict, timeout_ms: int):
 
 
 def fill_item_info_fields(page, config: dict, timeout_ms: int | None = None) -> None:
-    process_cfg = config["epost"]["working_process"]
-    parcel_cfg = process_cfg["parcel"]
-    item_info_cfg = process_cfg["item_info"]
+    workflow_cfg = config["epost"]["workflow"]
+    parcel_cfg = workflow_cfg["step_02_pickup_info"]
+    item_info_cfg = workflow_cfg["step_04_item_info"]
 
     weight_selectors = parcel_cfg.get("weight_selectors")
     if not isinstance(weight_selectors, list) or not weight_selectors:
@@ -1245,8 +1255,8 @@ def fill_item_info_fields(page, config: dict, timeout_ms: int | None = None) -> 
 
 
 def fill_delivery_note(page, config: dict, timeout_ms: int | None = None) -> None:
-    process_cfg = config["epost"]["working_process"]
-    item_info_cfg = process_cfg["item_info"]
+    workflow_cfg = config["epost"]["workflow"]
+    item_info_cfg = workflow_cfg["step_04_item_info"]
     note = item_info_cfg.get("delivery_note")
     if not note:
         return
@@ -1260,9 +1270,9 @@ def fill_delivery_note(page, config: dict, timeout_ms: int | None = None) -> Non
 
 
 def handle_item_info_step_04(page, config: dict, timeouts: dict) -> None:
-    process_cfg = config["epost"]["working_process"]
-    sections_cfg = process_cfg.get("sections", {})
-    item_heading = sections_cfg.get("item_info", {}).get("heading_text_contains")
+    workflow_cfg = config["epost"]["workflow"]
+    item_cfg = workflow_cfg.get("step_04_item_info", {})
+    item_heading = item_cfg.get("heading_text_contains")
     if item_heading:
         ensure_section_open(page, item_heading, timeouts["action"])
 
@@ -1272,38 +1282,38 @@ def handle_item_info_step_04(page, config: dict, timeouts: dict) -> None:
 
 
 def add_to_recipient_list(page, config: dict, timeout_ms: int | None = None) -> None:
-    process_cfg = config["epost"]["working_process"]
-    sections_cfg = process_cfg.get("sections", {})
-    item_heading = sections_cfg.get("item_info", {}).get("heading_text_contains")
+    workflow_cfg = config["epost"]["workflow"]
+    item_cfg = workflow_cfg.get("step_04_item_info", {})
+    item_heading = item_cfg.get("heading_text_contains")
     if item_heading:
         ensure_section_open(page, item_heading, timeout_ms)
-    recipient_list_cfg = process_cfg["recipient_list"]
+    recipient_list_cfg = workflow_cfg["step_05_recipient_list"]
     clicked = click_link_by_text(page, recipient_list_cfg["add_button_text"], timeout_ms=timeout_ms)
     if not clicked:
         raise RuntimeError("받는 분 목록에 추가 링크를 찾지 못했습니다.")
 
 
 def validate_address(page, config: dict, timeout_ms: int | None = None) -> None:
-    process_cfg = config["epost"]["working_process"]
-    sections_cfg = process_cfg.get("sections", {})
-    recipient_list_heading = sections_cfg.get("recipient_list", {}).get("heading_text_contains")
+    workflow_cfg = config["epost"]["workflow"]
+    recipient_list_cfg = workflow_cfg.get("step_05_recipient_list", {})
+    recipient_list_heading = recipient_list_cfg.get("heading_text_contains")
     if recipient_list_heading:
         ensure_section_open(page, recipient_list_heading, timeout_ms)
-    validation_cfg = process_cfg["address_validation"]
-    clicked = click_link_by_text(page, validation_cfg["button_text"], timeout_ms=timeout_ms)
+    validation_button = recipient_list_cfg.get("address_validation_button_text", "주소검증")
+    clicked = click_link_by_text(page, validation_button, timeout_ms=timeout_ms)
     if not clicked:
         raise RuntimeError("주소검증 링크를 찾지 못했습니다.")
 
 
 def handle_payment_step_06(page, config: dict, timeouts: dict) -> None:
-    process_cfg = config["epost"]["working_process"]
-    sections_cfg = process_cfg.get("sections", {})
-    payment_heading = sections_cfg.get("payment", {}).get("heading_text_contains")
+    workflow_cfg = config["epost"]["workflow"]
+    payment_cfg = workflow_cfg.get("step_06_payment", {})
+    payment_heading = payment_cfg.get("heading_text_contains")
     if payment_heading:
         if not ensure_section_open(page, payment_heading, timeouts["action"]):
             raise RuntimeError("결제수단 등록 섹션을 찾지 못했습니다.")
 
-    payment_cfg = process_cfg["payment"]
+    payment_cfg = workflow_cfg["step_06_payment"]
     selectors_cfg = payment_cfg.get("selectors", {})
     field_selectors = selectors_cfg.get("fields", {})
 
@@ -1406,8 +1416,8 @@ def address_book_is_empty(page, empty_tokens: list[str]) -> bool:
 
 
 def fill_sender_section(page, config: dict, timeouts: dict) -> None:
-    process_cfg = config["epost"]["working_process"]
-    sender_cfg = process_cfg["sender"]
+    workflow_cfg = config["epost"]["workflow"]
+    sender_cfg = workflow_cfg["step_01_sender"]
     sender_name = normalize_spaces(str(sender_cfg.get("name") or "")).strip()
     page2 = open_address_popup(page, config, timeouts["action"], target="sender")
     attach_dialog_handler(page2, config["epost"]["script"]["login"]["accept_dialog_contains"])
@@ -1448,8 +1458,8 @@ def fill_sender_section(page, config: dict, timeouts: dict) -> None:
 
 def fill_manual_recipient(page, config: dict, timeouts: dict) -> None:
     epost_cfg = config["epost"]
-    process_cfg = epost_cfg["working_process"]
-    recipient_cfg = process_cfg["recipient"]
+    workflow_cfg = epost_cfg["workflow"]
+    recipient_cfg = workflow_cfg["step_03_recipient"]
     selector_fields = (recipient_cfg.get("selectors") or {}).get("fields") or {}
     name_selector = selector_fields.get("name", 'input[name="receiverName"]')
     detail_addr_selector = selector_fields.get("detail_address", 'input[name="reDetailAddr"]')
@@ -1474,14 +1484,14 @@ def run(playwright: Playwright) -> None:
     apply_excel_overrides(config)
     epost_cfg = config["epost"]
     script_cfg = epost_cfg["script"]
-    process_cfg = epost_cfg["working_process"]
-    # script_cfg: 기본 스크립트 설정 / process_cfg: 로그인 이후 작업(working process)
+    workflow_cfg = epost_cfg["workflow"]
+    # script_cfg: 기본 스크립트 설정 / workflow_cfg: 로그인 이후 작업(working process)
     timeouts = script_cfg["timeouts_ms"]
     progress_dir = ROOT / script_cfg["paths"]["progress_dir"]
     ensure_progress_dir(progress_dir)
     keep_open_after_run = script_cfg["browser"].get("keep_open_after_run", False)
     keep_open_poll_ms = timeouts.get("keep_open_poll_ms", 1000)
-    run_until_step = process_cfg.get("run_until_step")
+    run_until_step = workflow_cfg.get("run_until_step")
     try:
         run_until_step_int = int(run_until_step) if run_until_step is not None else None
     except (TypeError, ValueError):
@@ -1524,7 +1534,7 @@ def run(playwright: Playwright) -> None:
         navigate_to_parcel_reservation(page, config, timeouts["action"])
         page.wait_for_timeout(timeouts["page_stabilize"])
 
-        agree_text = process_cfg["parcel"]["agree_checkbox_text"]
+        agree_text = workflow_cfg["step_00_initial"]["agree_checkbox_text"]
         checked = page.evaluate(
             """(text) => {
                 const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
@@ -1558,7 +1568,7 @@ def run(playwright: Playwright) -> None:
             return
         click_next_button(page, config, timeouts["action"])
 
-        parcel_cfg = process_cfg["parcel"]
+        parcel_cfg = workflow_cfg["step_02_pickup_info"]
         parcel_selectors_cfg = parcel_cfg.get("selectors") or {}
         parcel_field_selectors = parcel_selectors_cfg.get("fields") or {}
 
@@ -1631,10 +1641,10 @@ def run(playwright: Playwright) -> None:
         if not click_link_by_text(page, pickup_next_text, pickup_next_container, timeouts["action"]):
             raise RuntimeError("방문접수 소포정보 다음 버튼을 찾지 못했습니다.")
 
-        recipient_cfg = process_cfg["recipient"]
+        recipient_cfg = workflow_cfg["step_03_recipient"]
         if not recipient_cfg["use_address_book"]:
             raise RuntimeError("주소록 사용이 비활성화되어 있습니다.")
-        address_book_cfg = process_cfg["address_book"]
+        address_book_cfg = workflow_cfg["address_book"]
         page4 = open_address_book_popup(page, config, timeouts["action"])
         group_selectors = (address_book_cfg.get("selectors") or {}).get("group_selectors")
         if not isinstance(group_selectors, list) or not group_selectors:
@@ -1742,7 +1752,7 @@ def run(playwright: Playwright) -> None:
 
         validate_address(page, config, timeouts["action"])
 
-        recipient_list_cfg = process_cfg["recipient_list"]
+        recipient_list_cfg = workflow_cfg["step_05_recipient_list"]
         recipient_list_selectors = recipient_list_cfg.get("selectors") or {}
         list_buttons = recipient_list_selectors.get("buttons") or {}
         img_btn_selector = list_buttons.get("img_btn", "#imgBtn")
