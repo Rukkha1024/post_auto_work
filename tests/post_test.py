@@ -146,13 +146,31 @@ def load_subject_row_from_excel(config: dict) -> dict[str, object]:
 
     import polars as pl
 
-    df = pl.read_excel(str(excel_path), sheet_name=str(sheet_name))
+    # Extract filter column names first
     filter_cfg = excel_cfg.get("filter") or {}
     mgmt_cfg = filter_cfg.get("management_no") or {}
     name_cfg = filter_cfg.get("subject_name") or {}
     mgmt_col = mgmt_cfg.get("column")
-    mgmt_value = str(mgmt_cfg.get("value") or "").strip()
     name_col = name_cfg.get("column")
+
+    # Build list of required columns to read
+    columns_to_read = set()
+    if mgmt_col:
+        columns_to_read.add(str(mgmt_col))
+    if name_col:
+        columns_to_read.add(str(name_col))
+    # Add data columns from input_excel.columns
+    for col_name in (excel_cfg.get("columns") or {}).values():
+        columns_to_read.add(str(col_name))
+
+    # Read only required columns from Excel
+    df = pl.read_excel(
+        str(excel_path),
+        sheet_name=str(sheet_name),
+        columns=list(columns_to_read)
+    )
+
+    mgmt_value = str(mgmt_cfg.get("value") or "").strip()
     name_value = str(name_cfg.get("value") or "").strip()
     if not mgmt_col or not mgmt_value:
         raise ValueError("config.yaml의 input_excel.filter.management_no 설정이 올바르지 않습니다.")
