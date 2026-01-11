@@ -45,10 +45,6 @@ Read 'progress/' folder's file and use playwright mcp before run the script.
 ------===========
 - [ ] 주소검증에서 원래 육지연 2개 나오나? 
 
-==========
-현재 관리번호 == '38' & 대상자 이름 == '김미선'의 주소 입력이 안되는 것 같은데? 
-전화번호, 주소 입력, 희망 회수 방문일 이 제대로 입력되는지 post_test.py 실행해서 확인해봐. 
-
 =======
 config.yaml의 parameter 배치를 조정하자. Archive\work_flow.md에 맞춰서 선형적으로 배치해라. 
 'input_excel' parameter는 아예 epost parameter랑 분리해도 되지 않나? 
