@@ -6,15 +6,19 @@ input_excel:
     management_no:
       column: "관리번호"
       # value는 targets 미설정 시에만 사용됨
-      value: "38"
+      value: "14"
     subject_name:
       column: "대상자 이름"
       # value는 targets 미설정 시에만 사용됨
-      value: "김미선"
+      value: "임성준"
   # 여러 대상자 배치 처리: 관리번호/이름 리스트
   targets:
-    - management_no: "38"
-      subject_name: "김미선"
+    - management_no: "14"
+      subject_name: "임성준"
+    - management_no: "144"
+      subject_name: "정화정"
+    - management_no: "142"
+      subject_name: "변지연"
   columns:
     sender_name: "대상자 이름"
     sender_contact: "대상자연락처"
@@ -47,7 +51,7 @@ epost:
       permissions_origins:
         - "https://www.epost.go.kr"
         - "https://parcel.epost.go.kr"
-      keep_open_after_run: true
+      keep_open_after_run: false
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:
