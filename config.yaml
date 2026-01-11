@@ -51,7 +51,7 @@ epost:
       permissions_origins:
         - "https://www.epost.go.kr"
         - "https://parcel.epost.go.kr"
-      keep_open_after_run: false
+      keep_open_after_run: true
 
     # 타임아웃 시간 설정 (밀리초)
     timeouts_ms:

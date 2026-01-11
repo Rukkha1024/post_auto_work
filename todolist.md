@@ -45,16 +45,13 @@ Read 'progress/' folder's file and use playwright mcp before run the script.
 ------===========
 - [ ] 주소검증에서 원래 육지연 2개 나오나? 
 
-=======
-config.yaml의 parameter 배치를 조정하자. Archive\work_flow.md에 맞춰서 선형적으로 배치해라. 
-'input_excel' parameter는 아예 epost parameter랑 분리해도 되지 않나? 
-
-======
-이제 사용자가 config.yaml에서 관리번호와 이름을 리스트 형태로 적으면, 그걸 바탕으로 하나하나씩 우체국 업무 택배 예약을 수행하는 절차를 마련하자. 
-
+===========
+<main issue>
+`python tests\post_test.py` 실행 시, 택배 주소 파싱에 대한 수정요청이다. 
 난 이게 결국 자동화로 만들건데, 지금 택배주소를 ai가 파싱할 수는 없어. 파이썬으로 어떤 룰이 있어야해. 
 
 택배주소 파싱에 있어서 지금 로직이 맞는지 모르겠어. 
+</main issue>
 
 <progress>
 1. web search로 택배주소 파싱을 어떻게 하는게 맞을지 생각. 
