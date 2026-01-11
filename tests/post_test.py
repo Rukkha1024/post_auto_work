@@ -1287,8 +1287,8 @@ def add_to_recipient_list(page, config: dict, timeout_ms: int | None = None) -> 
     item_heading = item_cfg.get("heading_text_contains")
     if item_heading:
         ensure_section_open(page, item_heading, timeout_ms)
-    recipient_list_cfg = workflow_cfg["step_05_recipient_list"]
-    clicked = click_link_by_text(page, recipient_list_cfg["add_button_text"], timeout_ms=timeout_ms)
+    add_button_text = item_cfg.get("add_to_list_button_text", "받는 분 목록에 추가")
+    clicked = click_link_by_text(page, add_button_text, timeout_ms=timeout_ms)
     if not clicked:
         raise RuntimeError("받는 분 목록에 추가 링크를 찾지 못했습니다.")
 
@@ -1644,7 +1644,7 @@ def run(playwright: Playwright) -> None:
         recipient_cfg = workflow_cfg["step_03_recipient"]
         if not recipient_cfg["use_address_book"]:
             raise RuntimeError("주소록 사용이 비활성화되어 있습니다.")
-        address_book_cfg = workflow_cfg["address_book"]
+        address_book_cfg = recipient_cfg.get("address_book", {})
         page4 = open_address_book_popup(page, config, timeouts["action"])
         group_selectors = (address_book_cfg.get("selectors") or {}).get("group_selectors")
         if not isinstance(group_selectors, list) or not group_selectors:
