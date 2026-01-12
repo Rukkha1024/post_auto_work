@@ -71,7 +71,11 @@ epost:
     # - 환경변수가 없으면 juso.api/README_juso.md의 <승인키>를 fallback으로 읽습니다.
     juso_api:
       enabled: true
-      base_url: "https://business.juso.go.kr/addrlink/addrLinkApi.do"
+      # Juso API 호출 모드
+      # - always: 항상 호출하여 도로명 키워드를 정규화
+      # - if_needed: 파싱 토큰이 도로명 형태가 아닐 때만 호출(기존 동작)
+      mode: "always"
+      base_url: "https://business.juso.go.kr/addrlink/addrLinkApi.do"     
       timeout_ms: 15000
       count_per_page: 10
       result_type: "json"

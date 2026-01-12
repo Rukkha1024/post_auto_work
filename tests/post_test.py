@@ -403,31 +403,75 @@ def looks_like_road_token(value: str) -> bool:
     return re.fullmatch(road_token_pattern, token) is not None
 
 
-def parse_pickup_address(value: object, config: dict) -> dict[str, str | None]:
+def parse_pickup_address(value: object, config: dict) -> dict[str, object]:
     rule = parse_pickup_address_rule(value)
     token = str(rule.get("result_text_contains") or "").strip()
-    if looks_like_road_token(token):
+
+    script_cfg = (config.get("epost") or {}).get("script") or {}
+    juso_cfg = script_cfg.get("juso_api") if isinstance(script_cfg, dict) else {}
+    juso_cfg = juso_cfg if isinstance(juso_cfg, dict) else {}
+    mode = str(juso_cfg.get("mode") or "if_needed").strip().lower()
+    if mode not in {"always", "if_needed"}:
+        mode = "if_needed"
+
+    token_road_like = looks_like_road_token(token)
+    api_checked = False
+    api_hit = False
+    api_adjusted = False
+    api_error: str | None = None
+
+    if mode == "if_needed" and token_road_like:
+        rule["api_checked"] = api_checked
+        rule["api_hit"] = api_hit
+        rule["api_adjusted"] = api_adjusted
+        rule["api_error"] = api_error
         return rule
 
     keyword = str(rule.get("keyword") or rule.get("raw") or "").strip()
     if not keyword:
+        rule["api_checked"] = api_checked
+        rule["api_hit"] = api_hit
+        rule["api_adjusted"] = api_adjusted
+        rule["api_error"] = api_error
         return rule
 
+    before_keyword = str(rule.get("keyword") or "").strip()
+    before_token = str(rule.get("result_text_contains") or "").strip()
+
     try:
+        api_checked = True
         juso_record = juso_address_search(config, keyword)
-    except Exception:
+    except Exception as exc:
+        api_error = f"{type(exc).__name__}: {exc}"
         juso_record = None
 
     if not juso_record:
+        rule["api_checked"] = api_checked
+        rule["api_hit"] = api_hit
+        rule["api_adjusted"] = api_adjusted
+        rule["api_error"] = api_error
         return rule
 
-    road_keyword = str(juso_record.get("roadAddrPart1") or juso_record.get("roadAddr") or "").strip()
+    api_hit = True
+
+    road_keyword = str(
+        juso_record.get("roadAddrPart1") or juso_record.get("roadAddr") or ""
+    ).strip()
     if road_keyword:
         rule["keyword"] = road_keyword
 
     result_text_contains = str(juso_record.get("result_text_contains") or "").strip()
     if result_text_contains:
         rule["result_text_contains"] = result_text_contains
+
+    after_keyword = str(rule.get("keyword") or "").strip()
+    after_token = str(rule.get("result_text_contains") or "").strip()
+    api_adjusted = (after_keyword != before_keyword) or (after_token != before_token)
+
+    rule["api_checked"] = api_checked
+    rule["api_hit"] = api_hit
+    rule["api_adjusted"] = api_adjusted
+    rule["api_error"] = api_error
     return rule
 
 
