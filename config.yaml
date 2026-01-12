@@ -151,6 +151,8 @@ epost:
         unit_field_name: "호"
         building: "103"
         unit: "912"
+        detail_address_label_contains:
+          - "상세주소"
         submit_text_contains: "주소입력"
 
     # ========================================================================

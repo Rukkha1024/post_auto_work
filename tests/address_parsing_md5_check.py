@@ -39,6 +39,7 @@ def main() -> None:
         actual = {
             "keyword": parsed.get("keyword"),
             "result_text_contains": parsed.get("result_text_contains"),
+            "detail_address": parsed.get("detail_address"),
             "building": parsed.get("building"),
             "unit": parsed.get("unit"),
         }

@@ -274,7 +274,7 @@ def safe_filename_token(value: str, max_len: int = 40) -> str:
     return token
 
 
-def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
+def parse_pickup_address_rule_legacy(value: object) -> dict[str, str | None]:
     raw = normalize_spaces(str(value or ""))
     if not raw:
         raise ValueError("택배 회수장소 주소 값이 비어 있습니다.")
@@ -323,6 +323,71 @@ def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
         "raw": raw,
         "keyword": keyword,
         "result_text_contains": result_token,
+        "building": building,
+        "unit": unit,
+    }
+
+
+def parse_pickup_address_rule(value: object) -> dict[str, str | None]:
+    raw_source = normalize_spaces(str(value or ""))
+    if not raw_source:
+        raise ValueError("택배 회수장소 주소 값이 비어 있습니다.")
+
+    raw = normalize_spaces(strip_parenthesized_text(raw_source))
+    if not raw:
+        raise ValueError("택배 회수장소 주소 값이 비어 있습니다.")
+
+    road_pattern = (
+        r"[가-힣0-9]+(?:로|길|대로)\s*\d+(?:-\d+)?(?:\s*번길\s*\d+(?:-\d+)?)?(?=$|[,\s(])"
+    )
+    road_match = re.search(road_pattern, raw)
+
+    keyword = ""
+    detail_address: str | None = None
+    if road_match:
+        keyword = raw[: road_match.end()].strip().rstrip(",")
+        remainder = raw[road_match.end() :].strip()
+        remainder = remainder.lstrip(",").strip()
+        detail_address = remainder or None
+    else:
+        keyword = raw.split(",", 1)[0].strip() or raw
+        if "," in raw:
+            remainder = raw.split(",", 1)[1].strip()
+            detail_address = remainder or None
+
+    unit_match = None
+    unit_source = detail_address or raw
+    for match in re.finditer(r"(\d{1,4})\s*호", unit_source):
+        unit_match = match
+    unit = unit_match.group(1) if unit_match else None
+
+    building: str | None = None
+    building_pattern = r"((?:\d{1,4}|[A-Za-z]|[가-힣]))\s*동"
+    if unit_match:
+        unit_pos = unit_match.start()
+        building_candidates = [
+            m for m in re.finditer(building_pattern, unit_source) if m.start() < unit_pos
+        ]
+        if building_candidates:
+            closest = min(building_candidates, key=lambda m: unit_pos - m.start())
+            building = closest.group(1)
+    else:
+        building_match = re.search(building_pattern, unit_source)
+        building = building_match.group(1) if building_match else None
+
+    road_match_for_token = road_match or re.search(road_pattern, keyword) or re.search(
+        road_pattern, raw
+    )
+    if road_match_for_token:
+        result_token = compact_spaces(road_match_for_token.group(0))
+    else:
+        result_token = compact_spaces(keyword or raw)
+
+    return {
+        "raw": raw,
+        "keyword": keyword,
+        "result_text_contains": result_token,
+        "detail_address": detail_address,
         "building": building,
         "unit": unit,
     }
@@ -529,6 +594,14 @@ def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str
         popup_cfg["result_text_contains"] = str(pickup_rule.get("result_text_contains") or "").strip() or compact_spaces(
             keyword
         )
+
+        detail_address = normalize_spaces(
+            str(pickup_rule.get("detail_address") or "")
+        ).strip()
+        if detail_address:
+            popup_cfg["detail_address"] = detail_address
+        else:
+            popup_cfg.pop("detail_address", None)
 
         building = pickup_rule.get("building")
         unit = pickup_rule.get("unit")
@@ -1428,6 +1501,7 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
 
     building = popup_cfg.get("building")
     unit = popup_cfg.get("unit")
+    detail_address = normalize_spaces(str(popup_cfg.get("detail_address") or "")).strip()
     if building and unit:
         apartment_radio_name = popup_cfg.get("apartment_detail_radio_name")
         if apartment_radio_name:
@@ -1479,6 +1553,23 @@ def fill_address_popup(page, config: dict, timeout_ms: int) -> None:
                 },
             )
         step_delay(page, timeout_ms)
+    elif detail_address:
+        label_tokens = popup_cfg.get("detail_address_label_contains") or ["상세주소"]
+        if isinstance(label_tokens, str):
+            label_tokens = [label_tokens]
+        if not isinstance(label_tokens, list):
+            label_tokens = ["상세주소"]
+        label_tokens = [
+            normalize_spaces(str(token)).strip()
+            for token in label_tokens
+            if normalize_spaces(str(token)).strip()
+        ]
+        if not label_tokens:
+            label_tokens = ["상세주소"]
+        if not set_input_by_associated_text_tokens(
+            page, label_tokens, detail_address, timeout_ms
+        ):
+            raise RuntimeError("주소 팝업 상세주소 입력 필드를 찾지 못했습니다.")
 
     clicked = page.evaluate(
         """(text) => {
