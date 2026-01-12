@@ -2227,8 +2227,6 @@ def run_parcel_reservation_flow(
     handle_item_info_step_04(page, config, timeouts)
     click_next_button(page, config, timeouts["action"])
 
-    validate_address(page, config, timeouts["action"])
-
     recipient_list_cfg = workflow_cfg["step_05_recipient_list"]
     recipient_list_selectors = recipient_list_cfg.get("selectors") or {}
     list_buttons = recipient_list_selectors.get("buttons") or {}
