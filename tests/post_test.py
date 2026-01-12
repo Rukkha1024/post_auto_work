@@ -598,6 +598,8 @@ def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str
         else:
             sender_name_value = (target or {}).get("subject_name") or fallback_name_cfg.get("value")
     sender_name = normalize_spaces(str(sender_name_value or "")).strip()
+    if not sender_name:
+        raise ValueError("엑셀에서 보내는 분 이름 값이 비어 있습니다.")
 
     sender_middle, sender_last = parse_sender_phone_parts(row.get(str(contact_col)))
     wish_receipt_date = parse_ymd_date(row.get(str(wish_date_col)))
@@ -611,8 +613,7 @@ def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str
 
     # Step 01 sender 오버라이드
     sender_cfg = workflow_cfg.get("step_01_sender") or {}
-    if sender_name:
-        sender_cfg["name"] = sender_name
+    sender_cfg["name"] = sender_name
     sender_phone_cfg = sender_cfg.get("phone") or {}
     sender_phone_cfg["middle"] = sender_middle
     sender_phone_cfg["last"] = sender_last
@@ -660,6 +661,50 @@ def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str
 
     epost_cfg["workflow"] = workflow_cfg
     config["epost"] = epost_cfg
+
+
+def validate_excel_overrides_applied(
+    config: dict, target: dict[str, str] | None = None
+) -> None:
+    epost_cfg = config.get("epost") or {}
+    workflow_cfg = epost_cfg.get("workflow") or {}
+
+    sender_cfg = workflow_cfg.get("step_01_sender") or {}
+    sender_phone_cfg = sender_cfg.get("phone") or {}
+    pickup_cfg = workflow_cfg.get("step_02_pickup_info") or {}
+
+    sender_name = normalize_spaces(str(sender_cfg.get("name") or "")).strip()
+    sender_middle = str(sender_phone_cfg.get("middle") or "").strip()
+    sender_last = str(sender_phone_cfg.get("last") or "").strip()
+    wish_receipt_date = str(pickup_cfg.get("wish_receipt_date") or "").strip()
+
+    missing: list[str] = []
+    if not sender_name:
+        missing.append("epost.workflow.step_01_sender.name")
+    if not sender_middle:
+        missing.append("epost.workflow.step_01_sender.phone.middle")
+    if not sender_last:
+        missing.append("epost.workflow.step_01_sender.phone.last")
+    if not wish_receipt_date:
+        missing.append("epost.workflow.step_02_pickup_info.wish_receipt_date")
+
+    if missing:
+        prefix = ""
+        if target:
+            mgmt = str(target.get("management_no") or "").strip()
+            name = str(target.get("subject_name") or "").strip()
+            if mgmt or name:
+                prefix = f"대상자(관리번호={mgmt or '?'}, 이름={name or '?'}) "
+        raise ValueError(
+            prefix + "엑셀 오버라이드 후 필수 값이 비어 있습니다: " + ", ".join(missing)
+        )
+
+    if sender_middle and not re.fullmatch(r"\d{4}", sender_middle):
+        raise ValueError(f"보내는 분 휴대전화 중간자리 형식이 올바르지 않습니다: {sender_middle!r}")
+    if sender_last and not re.fullmatch(r"\d{4}", sender_last):
+        raise ValueError(f"보내는 분 휴대전화 뒷자리 형식이 올바르지 않습니다: {sender_last!r}")
+    if wish_receipt_date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", wish_receipt_date):
+        raise ValueError(f"방문일 형식이 올바르지 않습니다: {wish_receipt_date!r}")
 
 
 def collect_validation_snapshot(page) -> dict:
@@ -2289,6 +2334,7 @@ def run(playwright: Playwright) -> None:
                     sheet_name,
                 )
                 apply_excel_overrides(config, row=row, target=target)
+                validate_excel_overrides_applied(config, target=target)
 
                 status, artifacts = run_parcel_reservation_flow(
                     page,

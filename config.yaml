@@ -168,12 +168,12 @@ epost:
     # Step 01: 보내는 분
     step_01_sender:
       heading_text_contains: "01 보내는 분"
-      name: ""  # Excel에서 오버라이드됨
+      name: null  # Excel에서 오버라이드됨
       name_label_contains:
         - "이름"
       phone:
-        middle: "3532"  # Excel에서 오버라이드됨
-        last: "1342"     # Excel에서 오버라이드됨
+        middle: null  # Excel에서 오버라이드됨
+        last: null     # Excel에서 오버라이드됨
       phone_selectors:
         middle: 'input[title*="보내는 분의 휴대전화 중간자리"]'
         last: 'input[title*="보내는 분의 휴대전화 뒷자리"]'
@@ -182,7 +182,7 @@ epost:
     # Step 02: 방문접수 소포정보
     step_02_pickup_info:
       heading_text_contains: "02 방문접수 소포정보"
-      wish_receipt_date: "2025-12-31"  # Excel에서 오버라이드됨
+      wish_receipt_date: null  # Excel에서 오버라이드됨
       wish_receipt_time: "09:00~11:00"
       pickup_keep_code: "05"
       pickup_keep_note: "문 앞에 있어요"
