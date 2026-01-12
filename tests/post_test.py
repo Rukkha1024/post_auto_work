@@ -604,8 +604,8 @@ def format_wish_receipt_date_for_console(value: object) -> str:
 
 
 def extract_sender_context_for_console(
-    config: dict, row: dict[str, object], target: dict[str, str] | None = None
-) -> dict[str, str]:
+    config: dict, row: dict[str, object], target: dict[str, str] | None = None  
+) -> dict[str, object]:
     excel_cfg = config.get("input_excel") or {}
     columns_cfg = excel_cfg.get("columns") or {}
     sender_name_col = columns_cfg.get("sender_name")
@@ -630,7 +630,27 @@ def extract_sender_context_for_console(
 
     pickup_address = ""
     if pickup_address_col:
-        pickup_address = str(row.get(str(pickup_address_col)) or "").strip()
+        pickup_address = str(row.get(str(pickup_address_col)) or "").strip()    
+
+    pickup_rule: dict[str, object] = {}
+    pickup_keyword = ""
+    pickup_detail = ""
+    if pickup_address:
+        try:
+            pickup_rule = parse_pickup_address(pickup_address, config)
+        except ValueError:
+            pickup_rule = {}
+        pickup_keyword = normalize_spaces(
+            str(
+                pickup_rule.get("keyword")
+                or pickup_rule.get("raw")
+                or pickup_address
+                or ""
+            )
+        ).strip()
+        pickup_detail = normalize_spaces(
+            str(pickup_rule.get("detail_address") or "")
+        ).strip()
 
     sender_phone = ""
     if contact_col:
@@ -645,8 +665,10 @@ def extract_sender_context_for_console(
     return {
         "sender_name": sender_name,
         "sender_phone": sender_phone,
-        "pickup_address": pickup_address,
         "wish_receipt_date": wish_receipt_date,
+        "pickup_rule": pickup_rule,
+        "pickup_keyword": pickup_keyword,
+        "pickup_detail": pickup_detail,
     }
 
 
@@ -657,25 +679,36 @@ def print_target_start_block(
     subject_name: str,
     sender_name: str,
     sender_phone: str,
-    pickup_address: str,
-    wish_receipt_date: str,
+    pickup_date: str,
+    pickup_keyword: str,
+    pickup_detail: str,
 ) -> None:
     mgmt_value = str(management_no or "").strip() or "?"
     name_value = str(subject_name or "").strip() or "?"
     sender_name_value = normalize_spaces(str(sender_name or "")).strip() or "?"
     sender_phone_value = str(sender_phone or "").strip() or "?"
-    pickup_address_value = normalize_spaces(str(pickup_address or "")).strip() or "?"
-    wish_date_value = str(wish_receipt_date or "").strip() or "?"
+    pickup_date_value = str(pickup_date or "").strip() or "?"
+    pickup_keyword_value = (
+        normalize_spaces(str(pickup_keyword or "")).strip().replace('"', '\\"') or "?"
+    )
+    pickup_detail_value = (
+        normalize_spaces(str(pickup_detail or "")).strip().replace('"', '\\"')
+        or "-"
+    )
 
-    print(f"[{index}/{total}] start")
-    print(f"  - 관리번호: {mgmt_value}")
-    print(f"  - 대상자명: {name_value}")
-    print(f"  - 보내는분: {sender_name_value} / {sender_phone_value}")
-    print(f"  - 회수주소: {pickup_address_value}")
-    print(f"  - 희망 방문일(wish_receipt_date): {wish_date_value}")
+    print(
+        f"[{index}/{total}] start | 관리번호={mgmt_value} | 대상자명={name_value} "
+        f"| 보내는분={sender_name_value}({sender_phone_value}) | 회수날짜={pickup_date_value} "
+        f'| 회수주소: keyword="{pickup_keyword_value}" / detail="{pickup_detail_value}"'
+    )
 
 
-def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str, str] | None = None) -> None:
+def apply_excel_overrides(
+    config: dict,
+    row: dict[str, object],
+    target: dict[str, str] | None = None,
+    pickup_rule_override: dict[str, object] | None = None,
+) -> None:
     # input_excel이 최상위 레벨로 이동됨
     excel_cfg = config.get("input_excel") or {}
     if not excel_cfg:
@@ -729,10 +762,14 @@ def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str
     workflow_cfg["step_02_pickup_info"] = pickup_cfg
 
     # Shared address_popup 오버라이드
-    try:
-        pickup_rule = parse_pickup_address(pickup_address, config)
-    except ValueError:
-        pickup_rule = {}
+    pickup_rule = pickup_rule_override if pickup_rule_override is not None else None
+    if not isinstance(pickup_rule, dict):
+        pickup_rule = None
+    if pickup_rule is None:
+        try:
+            pickup_rule = parse_pickup_address(pickup_address, config)
+        except ValueError:
+            pickup_rule = {}
 
     keyword = str(pickup_rule.get("keyword") or "").strip()
     if keyword:
@@ -2440,11 +2477,17 @@ def run(playwright: Playwright) -> None:
                     subject_name=name_value,
                     sender_name=sender_context["sender_name"],
                     sender_phone=sender_context["sender_phone"],
-                    pickup_address=sender_context["pickup_address"],
-                    wish_receipt_date=sender_context["wish_receipt_date"],
+                    pickup_date=sender_context["wish_receipt_date"],
+                    pickup_keyword=sender_context["pickup_keyword"],
+                    pickup_detail=sender_context["pickup_detail"],
                 )
-                apply_excel_overrides(config, row=row, target=target)
-                validate_excel_overrides_applied(config, target=target)
+                apply_excel_overrides(
+                    config,
+                    row=row,
+                    target=target,
+                    pickup_rule_override=sender_context.get("pickup_rule"),
+                )
+                validate_excel_overrides_applied(config, target=target)   
 
                 open_parcel_reservation_page(page, config, timeouts, main_page_url)
 
