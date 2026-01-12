@@ -572,6 +572,109 @@ def load_subject_row_from_dataframe(
     return filtered.row(0, named=True)
 
 
+def format_phone_for_console(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    digits = re.sub(r"\D+", "", raw)
+    if digits.startswith("82"):
+        digits = "0" + digits[2:]
+    if len(digits) == 10 and digits.startswith("10"):
+        digits = "0" + digits
+    if len(digits) > 11:
+        if "010" in digits:
+            start = digits.find("010")
+            digits = digits[start : start + 11]
+        else:
+            digits = digits[-11:]
+
+    if len(digits) == 11:
+        return f"{digits[:3]}-{digits[3:7]}-{digits[7:11]}"
+    if len(digits) == 10:
+        return f"{digits[:3]}-{digits[3:6]}-{digits[6:10]}"
+    return raw
+
+
+def format_wish_receipt_date_for_console(value: object) -> str:
+    try:
+        return parse_ymd_date(value)
+    except Exception:
+        return str(value or "").strip()
+
+
+def extract_sender_context_for_console(
+    config: dict, row: dict[str, object], target: dict[str, str] | None = None
+) -> dict[str, str]:
+    excel_cfg = config.get("input_excel") or {}
+    columns_cfg = excel_cfg.get("columns") or {}
+    sender_name_col = columns_cfg.get("sender_name")
+    contact_col = columns_cfg.get("sender_contact")
+    wish_date_col = columns_cfg.get("wish_receipt_date")
+    pickup_address_col = columns_cfg.get("pickup_address")
+
+    sender_name_value: object | None = None
+    if sender_name_col:
+        sender_name_value = row.get(str(sender_name_col))
+    else:
+        filter_cfg = excel_cfg.get("filter") or {}
+        fallback_name_cfg = filter_cfg.get("subject_name") or {}
+        fallback_col = fallback_name_cfg.get("column")
+        if fallback_col:
+            sender_name_value = row.get(str(fallback_col))
+        else:
+            sender_name_value = (target or {}).get("subject_name") or fallback_name_cfg.get(
+                "value"
+            )
+    sender_name = normalize_spaces(str(sender_name_value or "")).strip()
+
+    pickup_address = ""
+    if pickup_address_col:
+        pickup_address = str(row.get(str(pickup_address_col)) or "").strip()
+
+    sender_phone = ""
+    if contact_col:
+        sender_phone = format_phone_for_console(row.get(str(contact_col)))
+
+    wish_receipt_date = ""
+    if wish_date_col:
+        wish_receipt_date = format_wish_receipt_date_for_console(
+            row.get(str(wish_date_col))
+        )
+
+    return {
+        "sender_name": sender_name,
+        "sender_phone": sender_phone,
+        "pickup_address": pickup_address,
+        "wish_receipt_date": wish_receipt_date,
+    }
+
+
+def print_target_start_block(
+    index: int,
+    total: int,
+    management_no: str,
+    subject_name: str,
+    sender_name: str,
+    sender_phone: str,
+    pickup_address: str,
+    wish_receipt_date: str,
+) -> None:
+    mgmt_value = str(management_no or "").strip() or "?"
+    name_value = str(subject_name or "").strip() or "?"
+    sender_name_value = normalize_spaces(str(sender_name or "")).strip() or "?"
+    sender_phone_value = str(sender_phone or "").strip() or "?"
+    pickup_address_value = normalize_spaces(str(pickup_address or "")).strip() or "?"
+    wish_date_value = str(wish_receipt_date or "").strip() or "?"
+
+    print(f"[{index}/{total}] start")
+    print(f"  - 관리번호: {mgmt_value}")
+    print(f"  - 대상자명: {name_value}")
+    print(f"  - 보내는분: {sender_name_value} / {sender_phone_value}")
+    print(f"  - 회수주소: {pickup_address_value}")
+    print(f"  - 희망 방문일(wish_receipt_date): {wish_date_value}")
+
+
 def apply_excel_overrides(config: dict, row: dict[str, object], target: dict[str, str] | None = None) -> None:
     # input_excel이 최상위 레벨로 이동됨
     excel_cfg = config.get("input_excel") or {}
@@ -2313,14 +2416,11 @@ def run(playwright: Playwright) -> None:
             target_slug = (
                 f"{idx:03d}_{safe_filename_token(mgmt_value, max_len=20)}_{safe_filename_token(name_value, max_len=20)}"
             )
-            print(f"[{idx}/{len(targets)}] start: 관리번호={mgmt_value} / 이름={name_value}")
 
             page = context.new_page()
             page_for_manual_close = page
             attach_dialog_handler(page, script_cfg["login"]["accept_dialog_contains"])
             try:
-                open_parcel_reservation_page(page, config, timeouts, main_page_url)
-
                 row = load_subject_row_from_dataframe(
                     df,
                     mgmt_col,
@@ -2330,8 +2430,23 @@ def run(playwright: Playwright) -> None:
                     excel_path,
                     sheet_name,
                 )
+                sender_context = extract_sender_context_for_console(
+                    config, row=row, target=target
+                )
+                print_target_start_block(
+                    idx,
+                    len(targets),
+                    management_no=mgmt_value,
+                    subject_name=name_value,
+                    sender_name=sender_context["sender_name"],
+                    sender_phone=sender_context["sender_phone"],
+                    pickup_address=sender_context["pickup_address"],
+                    wish_receipt_date=sender_context["wish_receipt_date"],
+                )
                 apply_excel_overrides(config, row=row, target=target)
                 validate_excel_overrides_applied(config, target=target)
+
+                open_parcel_reservation_page(page, config, timeouts, main_page_url)
 
                 status, artifacts = run_parcel_reservation_flow(
                     page,
