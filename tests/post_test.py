@@ -2232,7 +2232,6 @@ def run_parcel_reservation_flow(
     list_buttons = recipient_list_selectors.get("buttons") or {}
     img_btn_selector = list_buttons.get("img_btn", "#imgBtn")
     addr_btn_selector = list_buttons.get("addr_btn", "#btnAddr")
-    click_selector(page, img_btn_selector, timeouts["action"])
     click_selector(page, addr_btn_selector, timeouts["action"])
     list_next_cfg = recipient_list_selectors.get("next") or {}
     list_next_container = list_next_cfg.get("container_selector", "#recListNextDiv")
