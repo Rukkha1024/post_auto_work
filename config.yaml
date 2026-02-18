@@ -1,34 +1,6 @@
-# 데이터 입력 설정 (최상위 레벨로 분리)
-input_excel:
-  path: "질병청구글시트복제본.xlsx"
-  sheet_name: "2025_수도권1(민형)"
-  filter:
-    management_no:
-      column: "관리번호"
-      # value는 targets 미설정 시에만 사용됨
-      value: "14"
-    subject_name:
-      column: "대상자 이름"
-      # value는 targets 미설정 시에만 사용됨
-      value: "임성준"
-  # 여러 대상자 배치 처리: 관리번호/이름 리스트
-  targets:
-    - management_no: "14"
-      subject_name: "임성준"
-    - management_no: "144"
-      subject_name: "정화정"
-    - management_no: "142"
-      subject_name: "변지연"
-  columns:
-    sender_name: "대상자 이름"
-    sender_contact: "대상자연락처"
-    wish_receipt_date: "희망 회수 방문일"
-    pickup_address: "택배 회수장소 주소"
-
-# ============================================================================
-# ePost 자동화 설정
+# config.yaml - ePost automation settings
 epost:
-  # 공통 스크립트 설정: 브라우저/경로/타임아웃/로그인/팝업 등
+  # 기본 스크립트 설정 (공통): 브라우저/경로/타임아웃/로그인/팝업 등
   script:
     # URL 주소 설정
     urls:
@@ -40,7 +12,7 @@ epost:
       username: "fg0015"
       password: "dmlduf1308!"
 
-    # 브라우저 옵션
+    # 브라우저 옵션 (headless: false = 창 보임, true = 백그라운드 실행)
     browser:
       headless: false
       args:
@@ -52,7 +24,7 @@ epost:
     timeouts_ms:
       page_stabilize: 1000
       login_wait: 1000
-      popup: 10000
+      popup: 1000
       action: 1000
       keep_open_poll_ms: 1000
 
@@ -60,23 +32,6 @@ epost:
     paths:
       progress_dir: "progress"
       failure_screenshot_prefix: "post_test_failure"
-
-    # 도로명주소(juso.go.kr) 검색 API (주소 정규화용)
-    # - confmKey는 config에 저장하지 말고 환경변수로 주입하는 것을 권장합니다.
-    # - 환경변수가 없으면 juso.api/README_juso.md의 <승인키>를 fallback으로 읽습니다.
-    juso_api:
-      enabled: true
-      # Juso API 호출 모드
-      # - always: 항상 호출하여 도로명 키워드를 정규화
-      # - if_needed: 파싱 토큰이 도로명 형태가 아닐 때만 호출(기존 동작)
-      mode: "always"
-      base_url: "https://business.juso.go.kr/addrlink/addrLinkApi.do"     
-      timeout_ms: 15000
-      count_per_page: 10
-      result_type: "json"
-      cache_path: "progress/juso_cache.json"
-      confm_key_env: "JUSO_CONFM_KEY"
-      confm_key_fallback_path: "juso.api/README_juso.md"
 
     # 로그인 셀렉터 및 대화상자 처리
     login:
@@ -100,187 +55,68 @@ epost:
       close_url_contains:
         - "main.retrieveMainPopupDetail.comm"
 
-  # ==========================================================================
-  # 워크플로우 설정 (선형 배치)
-  workflow:
-    # 어느 단계까지 실행할지 제어 (None = 전체 실행)
-    run_until_step: 
-
-    # 여러 단계에서 공유되는 설정
-    shared:
-      # 네비게이션 메뉴 단계
-      navigation:
-        menu_steps:
-          - text: "국내소포"
-            index: 1
-          - text: "방문접수소포 반품예약"
-            index: 2
-          - text: "방문접수소포 방문접수예약"
-            index: 0
-
-      # 다음 버튼 설정
-      next_button:
-        preferred_selectors:
-          - "#btnNext"
-        selectors:
-          - "a"
-          - "button"
-        text_contains:
-          - "다음"
-
-      # 주소 검색 팝업 설정 (보내는 분, 받는 분 공통 사용)
-      address_popup:
-        trigger_onclick_contains_by_target:
-          sender: "newPostNum"
-          recipient: "newRePostNum"
-        trigger_text_contains: "주소찾기"
-        keyword_selector: 'input[name="keyword"]'
-        keyword: "향군로 74번길 26"
-        search_button_selectors:
-          - 'button[type="button"]'
-          - 'button[type="submit"]'
-          - 'input[type="button"]'
-        search_button_text_contains:
-          - "검색"
-          - "찾기"
-          - "주소검색"
-        result_text_contains: "향군로74번길 26"
-        apartment_detail_radio_name: "상세주소(아파트)"
-        building_field_name: "동"
-        unit_field_name: "호"
-        building: "103"
-        unit: "912"
-        detail_address_label_contains:
-          - "상세주소"
-        submit_text_contains: "주소입력"
-
-    # ========================================================================
-    # Step 00: 초기 동의 체크박스
-    step_00_initial:
+  # 로그인 이후 작업(Working process): 접수/주소/수취인/결제/수동 단계 등
+  working_process:
+    # 택배 신청 정보
+    parcel:
       agree_checkbox_text: "우편금지물품"
-
-    # ========================================================================
-    # Step 01: 보내는 분
-    step_01_sender:
-      heading_text_contains: "01 보내는 분"
-      name: null  # Excel에서 오버라이드됨
-      name_label_contains:
-        - "이름"
-      phone:
-        middle: null  # Excel에서 오버라이드됨
-        last: null     # Excel에서 오버라이드됨
-      phone_selectors:
-        middle: 'input[title*="보내는 분의 휴대전화 중간자리"]'
-        last: 'input[title*="보내는 분의 휴대전화 뒷자리"]'
-
-    # ========================================================================
-    # Step 02: 방문접수 소포정보
-    step_02_pickup_info:
-      heading_text_contains: "02 방문접수 소포정보"
-      wish_receipt_date: null  # Excel에서 오버라이드됨
+      wish_receipt_date: "2025-12-31"
       wish_receipt_time: "09:00~11:00"
       pickup_keep_code: "05"
       pickup_keep_note: "문 앞에 있어요"
-      weight_code: "02"  # 5kg
-      volume_code: "02"  # 80cm
+      weight_code: "11"
+      volume_code: "80"
       product_code: "023"
-      selectors:
-        fields:
-          wish_receipt_date: 'select[name="wishReceiptTime"]'
-          wish_receipt_time: 'select[name="wishReceiptTimeNm"]'
-          pickup_keep: 'select[name="pickupKeep"]'
-          pickup_keep_note: 'input[name="pickupKeepNm"]'
-        buttons:
-          pickup_save: "#pickupSaveBtn"
-        next:
-          container_selector: "#pickupInfoDiv"
-          text: "다음"
-        weight_selectors:
-          - "#limit_wg"
-          - "#tmpWght1"
-        volume_selectors:
-          - "#limit_vol"
-          - "#tmpVol1"
-        product_code_selectors:
-          - "#labProductCode"
 
-    # ========================================================================
-    # Step 03: 받는 분
-    step_03_recipient:
-      heading_text_contains: "03 받는 분"
+    # 주소 검색 팝업 설정
+    address_popup:
+      trigger_onclick_contains: "newRePostNum"
+      trigger_text_contains: "주소찾기"
+      keyword_selector: 'input[name="keyword"]'
+      keyword: "향군로 74번길 26"
+      search_button_selectors:
+        - 'button[type="button"]'
+        - 'button[type="submit"]'
+        - 'input[type="button"]'
+      search_button_text_contains:
+        - "검색"
+        - "찾기"
+        - "주소검색"
+      result_text_contains: "향군로74번길 26"
+      building: "103"
+      unit: "912"
+      submit_text_contains: "입력"
+
+    # 주소록 관련
+    address_book:
+      search_text: "주소록 검색"
+      confirm_text: "확인"
+      empty_text_contains:
+        - "주소록이 없습니다"
+        - "등록된 주소록이 없습니다"
+
+    item_info:
+      popup_trigger_text: "물품정보 불러오기"
+      item_selection_text: "전자제품"
+
+    recipient_list:
+      add_button_text: "받는 분 목록에 추가"
+
+    address_validation:
+      button_text: "주소검증"
+
+    # 수취인 정보
+    recipient:
       use_address_book: true
       name: "육지연"
       address_book_group_value: "0"
       phone:
         mobile: ["010", "0000", "0000"]
       detail_address: "103동 912호"
-      selectors:
-        fields:
-          name: 'input[name="receiverName"]'
-          detail_address: 'input[name="reDetailAddr"]'
-          phone_1: "#reCell1"
-          phone_2: "#reCell2"
-          phone_3: "#reCell3"
-      # 주소록 관련
-      address_book:
-        search_text: "주소록 검색"
-        confirm_text: "확인"
-        empty_text_contains:
-          - "주소록이 없습니다"
-          - "등록된 주소록이 없습니다"
-        selectors:
-          group_selectors:
-            - "select"
 
-    # ========================================================================
-    # Step 04: 물품정보
-    step_04_item_info:
-      heading_text_contains: "04 물품정보"
-      popup_trigger_text: "물품정보 불러오기"
-      item_selection_text: "전자제품"
-      contents_selector: "#labcont"
-      contents_text: "전자제품"
-      delivery_note: "없을 시 010-3532-1342로 연락바랍니다."
-      delivery_note_selectors:
-        - "#labdemand"
-      delivery_note_label_contains:
-        - "배송시 특이사항"
-      add_to_list_button_text: "받는 분 목록에 추가"
-
-    # ========================================================================
-    # Step 05: 받는 분 목록
-    step_05_recipient_list:
-      heading_text_contains: "05 받는 분 목록"
-      address_validation_button_text: "주소검증"
-      selectors:
-        buttons:
-          img_btn: "#imgBtn"
-          addr_btn: "#btnAddr"
-        next:
-          container_selector: "#recListNextDiv"
-          text: "다음"
-
-    # ========================================================================
-    # Step 06: 결제수단 등록
-    step_06_payment:
-      heading_text_contains: "06 결제수단 등록"
+    # 결제 카드 정보
+    payment:
       card_numbers: ["1234", "1234", "1234", "1234"]
       expiry: ["11", "11"]
       password_digits: ["1", "1"]
       birthdate: "111111"
-      mobile_receipt: "n"
-      selectors:
-        fields:
-          card_no1: "#creditNo1"
-          card_no2: "#creditNo2"
-          card_no3: "#creditNo3"
-          card_no4: "#creditNo4"
-          expiry_month: "#creditExp1"
-          expiry_year: "#creditExp2"
-          password_digit1: "#creditPwd1"
-          password_digit2: "#creditPwd2"
-          birthdate: "#creditBirth"
-        validate_button: "#certCreditInfo"
-        mobile_receipt:
-          yes: "#mreceipt_y"
-          no: "#mreceipt_n"
