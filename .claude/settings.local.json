@@ -1,8 +1,7 @@
 {
   "enabledMcpjsonServers": [
     "context7",
-    "excel",
-    "playwright"
+    "excel"
   ],
   "enableAllProjectMcpServers": true
 }

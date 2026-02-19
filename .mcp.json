@@ -10,10 +10,6 @@
       "env": {
         "EXCEL_MCP_PAGING_CELLS_LIMIT": "4000"
       }
-    },
-    "playwright": {
-      "command": "cmd",
-      "args": ["/c", "npx", "@playwright/mcp@latest"]
     }
   }
 }

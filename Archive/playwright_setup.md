@@ -117,18 +117,25 @@ Example:
 conda run -n playwright python tests/naver_test.py
 ```
 
-## Playwright MCP (local install in .codex)
+## Playwright CLI + Skill (global install)
 
-If you want the MCP server installed locally (not just via npx), run this in the repo root:
+Install Playwright CLI globally:
 
 ```bash
-rm -rf .codex/node_modules .codex/node_modules.bak .codex/node_modules.partial
-conda run -n playwright npm install --no-audit --no-fund
+npm install -g @playwright/cli@latest
+playwright-cli --help
 ```
 
-Then start the MCP server:
+Install the Playwright CLI skill globally for Codex:
 
 ```bash
-conda run -n playwright npx playwright-mcp
+conda run -n playwright python -c "import sys; print(sys.executable)"
+conda run -n playwright python C:/Users/ding0/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py --repo microsoft/playwright-cli --path skills/playwright-cli --ref main
+```
+
+If the global binary is not in PATH, use npx:
+
+```bash
+npx playwright-cli --help
 ```
 

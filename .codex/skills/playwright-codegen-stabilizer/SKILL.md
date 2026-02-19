@@ -5,7 +5,7 @@ description: >
   Use when a Playwright script recorded via codegen is flaky, fails when replayed, or requires frequent edits
   due to unstable locators, timing issues, popups/dialogs, multi-window flows, or dynamic DOM.
   Provides a repeatable workflow: convert recordings into intent-based locators, centralize selectors and tunables in
-  config, add step contracts and diagnostics (trace/screenshot/HTML/a11y dumps), and use Playwright MCP (if available)
+  config, add step contracts and diagnostics (trace/screenshot/HTML/a11y dumps), and use Playwright CLI plus the Playwright CLI skill
   to debug failures and validate fixes.
 ---
 
@@ -52,9 +52,9 @@ Convert codegen output into “production automation”: resilient locators, cen
 - If the site spawns nuisance popups, close by URL/title patterns.
 - See `references/popups-and-dialogs.md`.
 
-6) Validate using Playwright MCP (when available)
-- Use MCP to inspect the DOM at the failure point, confirm locator uniqueness, and verify the new locator works interactively.
-- If MCP is unavailable, fall back to `page.pause()` + trace viewer.
+6) Validate using Playwright CLI and skill
+- Use Playwright CLI session commands to inspect the DOM at the failure point, confirm locator uniqueness, and verify the new locator works interactively.
+- If CLI interaction is unavailable, fall back to `page.pause()` + trace viewer.
 
 7) Visual validation (required)
 - After changes, run the flow and capture **result screenshots** at the defined verification checkpoints.

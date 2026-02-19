@@ -1,12 +1,12 @@
 ---
 name: playwright-excel
-description: Integrate Excel (.xlsx) data into Playwright codegen scripts by replacing hardcoded values with config-driven lookups, loading data with polars, and validating every step with Playwright MCP (start MCP from the repo if not running). Use for Playwright automation updates that require Excel-backed data, config.yaml centralization, or MCP validation/reporting.
+description: Integrate Excel (.xlsx) data into Playwright codegen scripts by replacing hardcoded values with config-driven lookups, loading data with polars, and validating every step with Playwright CLI plus the Playwright CLI skill. Use for Playwright automation updates that require Excel-backed data, config.yaml centralization, or CLI-based validation/reporting.
 ---
 
 # Playwright Excel Integration
 
 ## Overview
-Convert Playwright codegen scripts into Excel-driven automations with centralized config and required MCP validation.
+Convert Playwright codegen scripts into Excel-driven automations with centralized config and required Playwright CLI validation.
 
 ## Environment
 - Use the `playwright` conda environment.
@@ -27,7 +27,7 @@ Convert Playwright codegen scripts into Excel-driven automations with centralize
 5. Modify the Playwright script:
    - Add a config loader and an Excel loader (polars; see `references/excel-loading.md`).
    - Replace hardcoded values with `data[...]`.
-6. Always run Playwright MCP validation; if MCP is not running, start it from this repo before continuing (see `references/mcp-validation.md`).
+6. Always run Playwright CLI validation using the Playwright CLI skill before continuing (see `references/mcp-validation.md`).
 7. When refactoring existing pipelines/logic, generate outputs and compare MD5 checksums with reference files (see `references/md5-validation.md`).
 8. Run the updated script with `conda run -n playwright python`.
 

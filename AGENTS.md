@@ -26,7 +26,7 @@ The primary goal is to centralize shared values across multiple scripts. This en
 
 ----
 - User interest in web automation. 
-- use playwright mcp when run the script. 
+- For web-related tasks, always use Playwright CLI and the Playwright CLI skill.
 - if it does not working, capture the screenshot and fix the problem. you can also read 'progress/' folder's file for finding a solution. 
 - You can change the automation script to a different language if you prefer. The only reason it is currently written in Python is because it needs to interact with Excel files for web automation purpose. 
 - "Archive\work_flow.md" file is the reference of the web automation flow.
