@@ -7,7 +7,7 @@ dmlduf1308!
 run post_test.py and check the progress well. 
 
 User interest in web automation. 
-Read 'progress/' folder's file and use Playwright CLI and the Playwright CLI skill before run the script. 
+Read 'progress/' folder's file and use playwright mcp before run the script. 
 if it does not working, capture the screenshot and fix the problem. 
 
 command: `conda run -n playwright python tests/post_test.py`
@@ -24,21 +24,9 @@ post_test_V2.py의 작업 내용과 순서가 post_test.py과 일치하는지  �
 </exclue>
 
 ======
-<purpose>
-@post_test.py 수정 필요
-</purpose>
-<rule>
-Read 'progress/' folder's file and use Playwright CLI and the Playwright CLI skill before run the script.
-너는 지금 progress 하나 실행하고 제대로 되는지 확인을 해야 한다. Playwright CLI와 Playwright CLI skill을 사용해서 작업을 해라.    
-</rule>
-<problem>
-04 물품정보에서 다음의 progress가 안됨. 
-
-1. 03에서 "다음"
-2. "물품정보 불러오기"
-3. 전자제품 클릭 
-4. 크롬 팝업 "확인" 클릭 
-5. 배송시 특이사항 작성 
-6. "받는 분 목록에 추가" 클릭 
-</problem>
-
+1. 진입경로 수정 
+2. 순서 일치하기 
+3. 그건 상관 없어. V2는 채워넣는 용이라서 잘 되어 있다 생각한건 굳이 녹화 안했어 
+4. 수령인 처리 수기가 아니라 이제 메뉴로 들어갈텐데? 
+5. "다음"은 항상 해당 메뉴가 끝나면 시행하는거다. 
+6. 그거 해야지. 
